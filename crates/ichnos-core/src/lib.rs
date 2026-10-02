@@ -1,5 +1,6 @@
-//! What the Ichnos binaries share: the per-session SQLite store.
+//! What the Ichnos binaries share: the per-session SQLite store and the sessions catalog.
 
+pub mod catalog;
 pub mod error_log;
 pub mod store;
 
