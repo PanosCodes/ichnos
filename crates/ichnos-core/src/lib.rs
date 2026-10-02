@@ -1,4 +1,6 @@
 //! What the Ichnos binaries share: the per-session SQLite store and the sessions catalog.
+//!
+//! The `ichnos` CLI writes to the store from the Claude Code hook.
 
 pub mod catalog;
 pub mod error_log;
