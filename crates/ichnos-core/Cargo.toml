@@ -1,0 +1,22 @@
+[package]
+name = "ichnos-core"
+description = "Ichnos's session store, live feed and summarizer, shared by the CLI and the viewer app"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+chrono.workspace = true
+rusqlite.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio = { workspace = true, features = ["io-util", "macros", "process", "rt", "sync", "time"] }
+
+[dev-dependencies]
+tempfile.workspace = true
+tokio = { workspace = true, features = ["rt-multi-thread"] }
+
+[lints]
+workspace = true
