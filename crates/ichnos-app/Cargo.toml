@@ -1,0 +1,29 @@
+[package]
+name = "ichnos-app"
+description = "Ichnos's native viewer: a live timeline of coding-agent sessions, built with GPUI"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "ichnos-app"
+path = "src/main.rs"
+
+[dependencies]
+ichnos-core.workspace = true
+ichnos-model.workspace = true
+chrono.workspace = true
+clap.workspace = true
+gpui-kit = "0.7"
+mimalloc.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio = { workspace = true, features = ["io-util", "macros", "process", "rt", "rt-multi-thread", "sync", "time"] }
+
+[lints]
+workspace = true
+
+[dev-dependencies]
+gpui-kit = { version = "0.7", features = ["test-support"] }
+tempfile.workspace = true

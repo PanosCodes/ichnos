@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/ichnos", "crates/ichnos-core", "crates/ichnos-model"]
+members = ["crates/ichnos", "crates/ichnos-app", "crates/ichnos-core"]
 
 [workspace.package]
 version = "0.1.0"
@@ -14,6 +14,7 @@ ichnos-model = { path = "crates/ichnos-model" }
 rusqlite = { version = "0.40", features = ["bundled"] }
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 clap = { version = "4.6", features = ["derive", "env"] }
+mimalloc = "0.1"
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["preserve_order"] }
 thiserror = "2"
