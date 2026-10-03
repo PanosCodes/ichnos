@@ -296,8 +296,6 @@ impl Viewer {
             .min_w_0()
             .min_h_0()
             .overflow_hidden()
-            .border_r_1()
-            .border_color(color(theme::LINE))
             .when_else(
                 pan.is_dragging(),
                 gpui_kit::Styled::cursor_grabbing,
@@ -765,7 +763,7 @@ impl Viewer {
         div()
             .flex()
             .flex_col()
-            .w(px(340.))
+            .w(px(self.state.panel().width()))
             .flex_none()
             .min_h_0()
             .bg(color(theme::PANEL))

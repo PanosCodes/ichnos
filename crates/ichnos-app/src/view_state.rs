@@ -65,6 +65,8 @@ pub struct ViewState {
     pending_reveal: Option<Key>,
     /// How the graph is moved from its centered position.
     graph_pan: Pan,
+    /// The width of the right-hand panel.
+    panel: PanelWidth,
 }
 
 impl Default for ViewState {
@@ -83,6 +85,7 @@ impl Default for ViewState {
             error_jump: None,
             pending_reveal: None,
             graph_pan: Pan::default(),
+            panel: PanelWidth::default(),
         }
     }
 }
@@ -206,6 +209,17 @@ impl ViewState {
     /// Move the graph.
     pub fn graph_pan_mut(&mut self) -> &mut Pan {
         &mut self.graph_pan
+    }
+
+    /// The width of the right-hand panel.
+    #[must_use]
+    pub fn panel(&self) -> &PanelWidth {
+        &self.panel
+    }
+
+    /// Resize the right-hand panel.
+    pub fn panel_mut(&mut self) -> &mut PanelWidth {
+        &mut self.panel
     }
 
     /// The row to scroll into view, taken once.
@@ -443,6 +457,74 @@ pub fn failed_calls(model: &SessionModel) -> Vec<Key> {
         .collect()
 }
 
+/// The right-hand panel's default width, in pixels.
+pub const PANEL_DEFAULT: f32 = 380.;
+
+/// The right-hand panel's narrowest and widest, in pixels.
+pub const PANEL_RANGE: (f32, f32) = (260., 720.);
+
+/// The width, in pixels, the main pane keeps however wide the panel is dragged.
+pub const MAIN_MIN: f32 = 320.;
+
+/// The width of the right-hand panel, and the resize drag in progress.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct PanelWidth {
+    width: f32,
+    /// Where the pointer and the width were when the drag started.
+    drag: Option<(f32, f32)>,
+}
+
+impl Default for PanelWidth {
+    fn default() -> Self {
+        Self {
+            width: PANEL_DEFAULT,
+            drag: None,
+        }
+    }
+}
+
+impl PanelWidth {
+    /// The width, in pixels.
+    #[must_use]
+    pub fn width(&self) -> f32 {
+        self.width
+    }
+
+    /// Whether a drag is in progress.
+    #[must_use]
+    pub fn is_dragging(&self) -> bool {
+        self.drag.is_some()
+    }
+
+    /// Back to the default width.
+    pub fn reset(&mut self) {
+        self.width = PANEL_DEFAULT;
+    }
+
+    /// The pointer went down at `x`.
+    pub fn start(&mut self, x: f32) {
+        self.drag = Some((x, self.width));
+    }
+
+    /// The pointer moved to `x` in a window `window` pixels wide; `true` when the width changed.
+    /// Dragging left widens the panel.
+    pub fn drag_to(&mut self, x: f32, window: f32) -> bool {
+        let Some((from, width)) = self.drag else {
+            return false;
+        };
+        let most = (window - MAIN_MIN).clamp(PANEL_RANGE.0, PANEL_RANGE.1);
+        let next = (width + from - x).clamp(PANEL_RANGE.0, most);
+        let moved = (next - self.width).abs() > f32::EPSILON;
+        self.width = next;
+        moved
+    }
+
+    /// The pointer went up.
+    pub fn end(&mut self) {
+        self.drag = None;
+    }
+}
+
 /// Pointer travel, in pixels, beyond which a press counts as a drag rather than a click.
 const DRAG_THRESHOLD: f32 = 3.;
 
@@ -555,6 +637,31 @@ mod tests {
     use serde_json::{Value, json};
 
     use super::*;
+
+    #[test]
+    fn dragging_the_handle_left_widens_the_panel() {
+        let mut panel = PanelWidth::default();
+        panel.start(1000.);
+        assert!(panel.drag_to(940., 1600.));
+        assert_eq!(panel.width(), PANEL_DEFAULT + 60.);
+        panel.end();
+        assert!(!panel.drag_to(900., 1600.));
+        assert!(!panel.is_dragging());
+    }
+
+    #[test]
+    fn the_panel_width_stays_within_bounds() {
+        let mut panel = PanelWidth::default();
+        panel.start(1000.);
+        panel.drag_to(-5000., 1600.);
+        assert_eq!(panel.width(), PANEL_RANGE.1);
+        panel.drag_to(5000., 1600.);
+        assert_eq!(panel.width(), PANEL_RANGE.0);
+        panel.drag_to(-5000., 800.);
+        assert_eq!(panel.width(), 800. - MAIN_MIN);
+        panel.reset();
+        assert_eq!(panel.width(), PANEL_DEFAULT);
+    }
 
     const DONE: Moment = Moment {
         at: None,

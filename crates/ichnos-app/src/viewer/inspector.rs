@@ -87,7 +87,7 @@ impl Viewer {
         div()
             .flex()
             .flex_col()
-            .w(px(380.))
+            .w(px(self.state.panel().width()))
             .flex_none()
             .min_h_0()
             .bg(color(theme::PANEL))
