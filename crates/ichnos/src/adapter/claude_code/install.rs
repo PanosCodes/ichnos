@@ -13,11 +13,11 @@ use serde_json::{Map, Value};
 use thiserror::Error;
 
 /// The hook block users would otherwise copy by hand; the source of truth for what is installed.
-const HOOKS_JSON: &str = include_str!("../../../hooks.json");
+const HOOKS_JSON: &str = include_str!("../../../../../hooks.json");
 
 /// The skill that teaches agents to query the session databases; compiled in, so it always
 /// matches the schema this binary writes.
-const SKILL_MD: &str = include_str!("../../../skill/SKILL.md");
+const SKILL_MD: &str = include_str!("../../../../../skill/SKILL.md");
 
 /// Folder of the skill, inside the `skills` folder next to the settings file.
 const SKILL_DIR: &str = "ichnos";

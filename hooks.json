@@ -6,7 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "ichnos hook",
+            "command": "ichnos hook claude-code",
             "timeout": 10
           }
         ]
@@ -18,7 +18,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "ichnos hook",
+            "command": "ichnos hook claude-code",
             "timeout": 10
           }
         ]
@@ -30,7 +30,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "ichnos hook",
+            "command": "ichnos hook claude-code",
             "timeout": 10
           }
         ]
@@ -41,7 +41,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "ichnos hook",
+            "command": "ichnos hook claude-code",
             "timeout": 10
           }
         ]
@@ -52,7 +52,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "ichnos hook",
+            "command": "ichnos hook claude-code",
             "timeout": 10
           }
         ]
@@ -63,7 +63,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "ichnos hook",
+            "command": "ichnos hook claude-code",
             "timeout": 10
           }
         ]
@@ -74,7 +74,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "ichnos hook",
+            "command": "ichnos hook claude-code",
             "timeout": 10
           }
         ]
@@ -85,7 +85,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "ichnos hook",
+            "command": "ichnos hook claude-code",
             "timeout": 10
           }
         ]
