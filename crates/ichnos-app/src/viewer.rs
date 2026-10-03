@@ -82,6 +82,12 @@ actions!(
         ToggleSwitcher,
         /// Close the open overlay.
         Dismiss,
+        /// Zoom the graph in.
+        ZoomIn,
+        /// Zoom the graph out.
+        ZoomOut,
+        /// Show the graph at actual size.
+        ZoomReset,
         /// Quit the app.
         Quit,
     ]
@@ -104,6 +110,10 @@ pub fn bind_keys(cx: &mut App) {
         KeyBinding::new("escape", Dismiss, Some(SHORTCUTS)),
         KeyBinding::new("cmd-k", ToggleSwitcher, Some(CONTEXT)),
         KeyBinding::new("ctrl-k", ToggleSwitcher, Some(CONTEXT)),
+        KeyBinding::new("cmd-=", ZoomIn, Some(SHORTCUTS)),
+        KeyBinding::new("cmd-+", ZoomIn, Some(SHORTCUTS)),
+        KeyBinding::new("cmd--", ZoomOut, Some(SHORTCUTS)),
+        KeyBinding::new("cmd-0", ZoomReset, Some(SHORTCUTS)),
         KeyBinding::new("cmd-q", Quit, None),
     ]);
     cx.on_action(|_: &Quit, cx| cx.quit());
@@ -619,6 +629,18 @@ impl Viewer {
         cx.notify();
     }
 
+    /// Apply a zoom change when the graph is shown.
+    fn zoom_graph(
+        &mut self,
+        change: impl FnOnce(&mut crate::view_state::Pan),
+        cx: &mut Context<Self>,
+    ) {
+        if self.state.view() == View::Graph {
+            change(self.state.graph_pan_mut());
+            cx.notify();
+        }
+    }
+
     fn on_dismiss(&mut self, _: &Dismiss, window: &mut Window, cx: &mut Context<Self>) {
         self.switcher = None;
         self.ask = None;
@@ -722,6 +744,15 @@ impl Render for Viewer {
                 this.toggle_switcher(window, cx);
             }))
             .on_action(cx.listener(Self::on_dismiss))
+            .on_action(cx.listener(|this, _: &ZoomIn, _, cx| {
+                this.zoom_graph(|pan| pan.zoom_by(graph::ZOOM_STEP), cx);
+            }))
+            .on_action(cx.listener(|this, _: &ZoomOut, _, cx| {
+                this.zoom_graph(|pan| pan.zoom_by(1. / graph::ZOOM_STEP), cx);
+            }))
+            .on_action(cx.listener(|this, _: &ZoomReset, _, cx| {
+                this.zoom_graph(crate::view_state::Pan::reset_zoom, cx);
+            }))
             .relative()
             .flex()
             .flex_col()

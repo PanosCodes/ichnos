@@ -5,14 +5,19 @@
 
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
-    AnyElement, Context, FontWeight, InteractiveElement as _, IntoElement, ParentElement as _,
-    PathBuilder, Pixels, Point, SharedString, StatefulInteractiveElement as _, Styled as _, canvas,
-    div, point, px, relative,
+    AnyElement, Context, FontWeight, InteractiveElement as _, IntoElement, MouseButton,
+    MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement as _, PathBuilder, PinchEvent,
+    Pixels, Point, Rems, ScrollWheelEvent, SharedString, StatefulInteractiveElement as _,
+    Styled as _, canvas, div, point, px, relative, rems,
 };
 use ichnos_core::event::MAIN_AGENT;
 use ichnos_model::call::Key;
 use ichnos_model::labels::{duration, label, text, tokens};
 use ichnos_model::model::{AgentBox, AgentGraph, NodeKind, SessionModel};
+
+use gpui_kit::TestSupportExt as _;
+
+use crate::zoom::zoom;
 
 use super::inspector::{body, button, heading, key_values};
 use super::{ToolSort, Viewer};
@@ -25,6 +30,10 @@ const MAIN_CARD: f32 = 340.;
 const H_GAP: f32 = 56.;
 const V_GAP: f32 = 90.;
 const TOOL_ROW: f32 = 21.;
+/// How much one press of a zoom button or key zooms.
+pub(super) const ZOOM_STEP: f32 = 1.2;
+/// How much a pixel of ⌘-scroll zooms: 100 px is a factor of e.
+const SCROLL_ZOOM: f32 = 0.01;
 
 /// What the graph shows about one agent.
 struct Facts {
@@ -272,27 +281,88 @@ impl Viewer {
             })
             .collect();
         let sort = self.tool_sort;
+        let pan = *self.state.graph_pan();
+        let (pan_x, pan_y) = pan.offset();
+        let scale = pan.zoom();
 
+        // The graph is centered in the pane and moved from there by dragging or scrolling.
         div()
             .id("graph")
             .relative()
+            .flex()
+            .items_center()
+            .justify_center()
             .flex_1()
             .min_w_0()
             .min_h_0()
-            .overflow_scroll()
+            .overflow_hidden()
             .border_r_1()
             .border_color(color(theme::LINE))
-            .child(
+            .when_else(
+                pan.is_dragging(),
+                gpui_kit::Styled::cursor_grabbing,
+                gpui_kit::Styled::cursor_grab,
+            )
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|this, event: &MouseDownEvent, _, cx| {
+                    this.state.graph_pan_mut().start(pair(event.position));
+                    cx.notify();
+                }),
+            )
+            .on_mouse_move(cx.listener(|this, event: &MouseMoveEvent, _, cx| {
+                if event.dragging() && this.state.graph_pan_mut().drag_to(pair(event.position)) {
+                    cx.notify();
+                }
+            }))
+            .on_mouse_up(
+                MouseButton::Left,
+                cx.listener(|this, _: &MouseUpEvent, _, cx| {
+                    this.state.graph_pan_mut().end();
+                    cx.notify();
+                }),
+            )
+            .on_mouse_up_out(
+                MouseButton::Left,
+                cx.listener(|this, _: &MouseUpEvent, _, cx| {
+                    this.state.graph_pan_mut().end();
+                    cx.notify();
+                }),
+            )
+            .on_scroll_wheel(cx.listener(|this, event: &ScrollWheelEvent, _, cx| {
+                let delta = pair(event.delta.pixel_delta(px(20.)));
+                let pan = this.state.graph_pan_mut();
+                // ⌘ or Ctrl turns scrolling into zooming, as in maps and design tools.
+                if event.modifiers.platform || event.modifiers.control {
+                    pan.zoom_by((delta.1 * SCROLL_ZOOM).exp());
+                } else {
+                    pan.scroll(delta);
+                }
+                cx.notify();
+            }))
+            .on_pinch(cx.listener(|this, event: &PinchEvent, _, cx| {
+                this.state.graph_pan_mut().zoom_by(1. + event.delta);
+                cx.notify();
+            }))
+            .child(zoom(
+                scale,
                 div()
                     .relative()
-                    .w(px(layout.width))
-                    .h(px(layout.height))
+                    .flex_none()
+                    .left(px(pan_x))
+                    .top(px(pan_y))
+                    .w(u(layout.width))
+                    .h(u(layout.height))
+                    .text_size(u(12.))
                     .child(
                         canvas(
                             |_, _, _| {},
                             move |bounds, (), window, _| {
                                 let at = |p: Point<f32>| -> Point<Pixels> {
-                                    point(bounds.origin.x + px(p.x), bounds.origin.y + px(p.y))
+                                    point(
+                                        bounds.origin.x + px(p.x * scale),
+                                        bounds.origin.y + px(p.y * scale),
+                                    )
                                 };
                                 for &(a, b) in &curves {
                                     let mid = f32::midpoint(a.y, b.y);
@@ -322,21 +392,21 @@ impl Viewer {
                     .children(labels.into_iter().map(|(at, via)| {
                         div()
                             .absolute()
-                            .left(px(at.x - 60.))
-                            .top(px(at.y - 9.))
-                            .w(px(120.))
+                            .left(u(at.x - 60.))
+                            .top(u(at.y - 9.))
+                            .w(u(120.))
                             .flex()
                             .justify_center()
                             .child(
                                 div()
-                                    .px(px(7.))
-                                    .py(px(2.))
+                                    .px(u(7.))
+                                    .py(u(2.))
                                     .bg(color(theme::PURPLE_BG))
                                     .border_1()
                                     .border_color(color(theme::PURPLE_LINE))
-                                    .rounded(px(10.))
+                                    .rounded(u(10.))
                                     .font_family(MONO)
-                                    .text_size(px(10.))
+                                    .text_size(u(10.))
                                     .text_color(color(theme::PURPLE_TEXT))
                                     .whitespace_nowrap()
                                     .child(via),
@@ -346,7 +416,7 @@ impl Viewer {
                         let entry = graph.get(index)?;
                         Some(self.render_card(entry, index, at, w, h, sort, cx))
                     })),
-            )
+            ))
             .child(
                 div()
                     .absolute()
@@ -356,10 +426,71 @@ impl Viewer {
                     .flex_row()
                     .border_1()
                     .border_color(color(theme::LINE_2))
-                    .rounded(px(5.))
+                    .rounded(px(theme::R_CONTROL))
                     .bg(color(theme::BG))
-                    .text_size(px(11.))
+                    .text_size(px(theme::FS_SMALL))
                     .text_color(color(theme::BTN))
+                    // Presses on the buttons don't start a drag.
+                    .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                    .child(
+                        div()
+                            .id("zoom-out")
+                            .px_2()
+                            .py_1()
+                            .cursor_pointer()
+                            .hover(|s| s.text_color(color(theme::BRIGHT)))
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.state.graph_pan_mut().zoom_by(1. / ZOOM_STEP);
+                                cx.notify();
+                            }))
+                            .child("−"),
+                    )
+                    .child(
+                        div()
+                            .id("zoom-reset")
+                            .w(px(44.))
+                            .py_1()
+                            .flex()
+                            .justify_center()
+                            .font_family(MONO)
+                            .cursor_pointer()
+                            .hover(|s| s.text_color(color(theme::BRIGHT)))
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.state.graph_pan_mut().reset_zoom();
+                                cx.notify();
+                            }))
+                            .child(format!("{:.0}%", scale * 100.)),
+                    )
+                    .child(
+                        div()
+                            .id("zoom-in")
+                            .px_2()
+                            .py_1()
+                            .border_r_1()
+                            .border_color(color(theme::LINE_2))
+                            .cursor_pointer()
+                            .hover(|s| s.text_color(color(theme::BRIGHT)))
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.state.graph_pan_mut().zoom_by(ZOOM_STEP);
+                                cx.notify();
+                            }))
+                            .child("+"),
+                    )
+                    .child(
+                        div()
+                            .id("center-graph")
+                            .px_2()
+                            .py_1()
+                            .border_r_1()
+                            .border_color(color(theme::LINE_2))
+                            .cursor_pointer()
+                            .hover(|s| s.text_color(color(theme::BRIGHT)))
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.state.graph_pan_mut().reset();
+                                cx.notify();
+                            }))
+                            .child("Center"),
+                    )
                     .child(
                         div()
                             .id("sort-time")
@@ -428,15 +559,15 @@ impl Viewer {
         div()
             .id(("card", index))
             .absolute()
-            .left(px(at.x))
-            .top(px(at.y))
-            .w(px(width))
-            .h(px(height))
+            .left(u(at.x))
+            .top(u(at.y))
+            .w(u(width))
+            .h(u(height))
             .flex()
             .flex_col()
             .bg(color(theme::CARD))
             .border_1()
-            .rounded(px(8.))
+            .rounded(u(theme::R_CARD))
             .overflow_hidden()
             .cursor_pointer()
             .border_color(color(if selected {
@@ -448,8 +579,11 @@ impl Viewer {
             }))
             .hover(|s| s.border_color(color(theme::HOVER_LINE)))
             .on_click(cx.listener(move |this, _, _, cx| {
-                this.state.select_agent(&id);
-                cx.notify();
+                // Releasing a drag that started on a card doesn't select it.
+                if !this.state.graph_pan().was_drag() {
+                    this.state.select_agent(&id);
+                    cx.notify();
+                }
             }))
             .child(
                 div()
@@ -458,7 +592,7 @@ impl Viewer {
                     .items_center()
                     .gap_2()
                     .px_3()
-                    .pt(px(10.))
+                    .pt(u(10.))
                     .child(agent_badge(facts.main))
                     .child(
                         div()
@@ -472,20 +606,20 @@ impl Viewer {
                         d.child(
                             div()
                                 .flex_none()
-                                .text_size(px(11.))
+                                .text_size(u(11.))
                                 .text_color(color(theme::RED))
                                 .child(format!("✕ {}", entry.errors())),
                         )
                     })
                     .when(entry.running(), |d| {
-                        d.child(div().size(px(6.)).rounded(px(3.)).bg(color(theme::BLUE)))
+                        d.child(div().size(u(6.)).rounded(u(3.)).bg(color(theme::BLUE)))
                     })
                     .child(
                         div()
                             .ml_auto()
                             .flex_none()
                             .font_family(MONO)
-                            .text_size(px(11.))
+                            .text_size(u(11.))
                             .text_color(color(theme::MUTED))
                             .child(facts.dur.map(duration).unwrap_or_default()),
                     ),
@@ -493,10 +627,10 @@ impl Viewer {
             .child(
                 div()
                     .px_3()
-                    .pt(px(2.))
+                    .pt(u(2.))
                     .pb_2()
                     .truncate()
-                    .text_size(px(11.))
+                    .text_size(u(11.))
                     .text_color(color(theme::MUTED))
                     .child(super::one_line(&facts.prompt)),
             )
@@ -526,7 +660,7 @@ impl Viewer {
                             .flex_row()
                             .items_center()
                             .gap_2()
-                            .h(px(TOOL_ROW))
+                            .h(u(TOOL_ROW))
                             .child(
                                 div()
                                     .flex()
@@ -544,23 +678,20 @@ impl Viewer {
                                         )
                                     }),
                             )
-                            .child(
-                                super::tree::numeric(28., theme::DIM)
-                                    .child(tally.calls.to_string()),
-                            )
+                            .child(numeric(28., theme::DIM).child(tally.calls.to_string()))
                             .child(
                                 div()
-                                    .w(px(80.))
+                                    .w(u(80.))
                                     .flex_none()
-                                    .h(px(5.))
-                                    .rounded(px(2.))
+                                    .h(u(5.))
+                                    .rounded(u(2.))
                                     .bg(color(theme::SOFT_LINE))
                                     .child(
                                         div()
-                                            .h(px(5.))
+                                            .h(u(5.))
                                             .w(relative(share))
-                                            .min_w(px(2.))
-                                            .rounded(px(2.))
+                                            .min_w(u(2.))
+                                            .rounded(u(2.))
                                             .bg(color(if tally.errors > 0 {
                                                 theme::RED_BAR
                                             } else {
@@ -568,7 +699,7 @@ impl Viewer {
                                             })),
                                     ),
                             )
-                            .child(super::tree::numeric(56., theme::BTN).child(duration(tally.ms)))
+                            .child(numeric(56., theme::BTN).child(duration(tally.ms)))
                     })),
             )
             .child(
@@ -577,11 +708,11 @@ impl Viewer {
                     .flex_row()
                     .gap_2()
                     .px_3()
-                    .py(px(7.))
+                    .py(u(7.))
                     .border_t_1()
                     .border_color(color(theme::SOFT_LINE))
                     .font_family(MONO)
-                    .text_size(px(10.5))
+                    .text_size(u(10.5))
                     .text_color(color(theme::MUTED))
                     .whitespace_nowrap()
                     .child(format!("model {}", duration(entry.model_ms())))
@@ -594,6 +725,7 @@ impl Viewer {
                             .child(format!("{} calls", facts.calls)),
                     ),
             )
+            .test_support()
             .into_any_element()
     }
 
@@ -724,11 +856,37 @@ fn agent_badge(main: bool) -> gpui_kit::Div {
     div()
         .flex_none()
         .font_family(MONO)
-        .text_size(px(10.))
+        .text_size(u(10.))
         .border_1()
         .border_color(color(line))
-        .rounded(px(3.))
-        .px(px(5.))
+        .rounded(u(theme::R_TAG))
+        .px(u(5.))
         .text_color(color(fg))
         .child(SharedString::from(text))
+}
+
+/// A point in pixels as plain numbers, for [`crate::view_state::Pan`].
+fn pair(point: Point<Pixels>) -> (f32, f32) {
+    (f32::from(point.x), f32::from(point.y))
+}
+
+/// A graph length: layout units are pixels at 100%, written as rems so [`zoom`] scales them.
+fn u(pixels: f32) -> Rems {
+    rems(pixels / BASE_REM)
+}
+
+/// The rem size layout units are written against: GPUI's default.
+const BASE_REM: f32 = 16.;
+
+/// A right-aligned mono number column that scales with the graph.
+fn numeric(width: f32, text: u32) -> gpui_kit::Div {
+    div()
+        .w(u(width))
+        .flex_none()
+        .flex()
+        .justify_end()
+        .font_family(MONO)
+        .text_size(u(11.))
+        .whitespace_nowrap()
+        .text_color(color(text))
 }

@@ -18,6 +18,7 @@ mod summary_host;
 mod theme;
 mod view_state;
 mod viewer;
+mod zoom;
 
 use std::io;
 use std::path::PathBuf;

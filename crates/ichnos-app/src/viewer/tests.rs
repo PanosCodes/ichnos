@@ -197,3 +197,53 @@ fn every_tree_row_spans_the_list_so_columns_line_up(cx: &mut TestAppContext) {
         );
     });
 }
+
+#[gpui_kit::test]
+fn dragging_the_graph_moves_it(cx: &mut TestAppContext) {
+    use gpui_kit::test::TestWindowExt as _;
+    use gpui_kit::{point, px};
+
+    let dir = tempfile::tempdir().unwrap();
+    let (viewer, mut visual) = open(cx, dir.path());
+    press(&mut visual, "g");
+    visual.update(|window, cx| {
+        window.drag(point(px(200.), px(500.)), point(px(260.), px(480.)), cx);
+    });
+    settle(&mut visual);
+    visual.update(|_, cx| {
+        let pan = viewer.read(cx).state.graph_pan();
+        assert_eq!(pan.offset(), (60., -20.));
+        assert!(!pan.is_dragging());
+    });
+}
+
+#[gpui_kit::test]
+fn zooming_scales_the_graph_cards(cx: &mut TestAppContext) {
+    use gpui_kit::test::TestWindowExt as _;
+
+    let dir = tempfile::tempdir().unwrap();
+    let (viewer, mut visual) = open(cx, dir.path());
+    press(&mut visual, "g");
+    let width = |visual: &mut VisualTestContext| {
+        visual.update(|window, cx| {
+            window.render_frame(cx);
+            f32::from(window.find(("card", 0_usize)).bounds().size.width)
+        })
+    };
+    let actual = width(&mut visual);
+    assert!(
+        (actual - 340.).abs() < 0.5,
+        "main card is {actual}px at 100%"
+    );
+
+    press(&mut visual, "cmd-=");
+    visual.update(|_, cx| assert!((viewer.read(cx).state.graph_pan().zoom() - 1.2).abs() < 1e-6));
+    let zoomed = width(&mut visual);
+    assert!(
+        (zoomed - 340. * 1.2).abs() < 0.5,
+        "main card is {zoomed}px at 120%"
+    );
+
+    press(&mut visual, "cmd-0");
+    assert!((width(&mut visual) - 340.).abs() < 0.5);
+}
