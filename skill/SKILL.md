@@ -1,0 +1,204 @@
+---
+name: ichnos
+description: Query Ichnos's logs of Claude Code sessions with SQL. Use when asked what happened in a Claude Code session (this one or an earlier one), why a tool call failed, which files a session changed, what a subagent did, how long things took, or to compare sessions.
+---
+
+# Ichnos logs
+
+Ichnos records every Claude Code session it is installed for: prompts, tool calls with their
+input, output, errors and durations, subagents, and the reply that ended each turn. Each session
+is one SQLite file. Query it with `sqlite3` and answer from the rows; cite event ids so the user
+can find them in the viewer.
+
+## Where the logs are
+
+```
+~/.ichnos/sessions/<session-id>.db     # or $ICHNOS_DIR/sessions/ when that is set
+```
+
+- **This session:** `~/.ichnos/sessions/$CLAUDE_CODE_SESSION_ID.db`
+- **Newest sessions:** `ls -t ~/.ichnos/sessions/*.db | head`
+- **Sessions of a project:** every database records its working directory. Newest first, with
+  each session's size:
+
+```sh
+for db in $(ls -t ~/.ichnos/sessions/*.db); do
+  echo "$db $(sqlite3 "$db" "SELECT (SELECT record->>'\$.extra.cwd' FROM events WHERE record->>'\$.extra.cwd' IS NOT NULL LIMIT 1) || '  ' || count(*) || ' events' FROM events")"
+done
+```
+
+## How to query
+
+```sh
+sqlite3 -json ~/.ichnos/sessions/<id>.db "SELECT …"
+```
+
+- Run `SELECT`s only. The agent may be writing to the database while you read it.
+- Don't pass `-readonly`: a database that was closed cleanly then fails with
+  "unable to open database file".
+- A session can hold megabytes of JSON. Always `LIMIT` rows and `substr` long fields. Start
+  with the outline, then drill into the rows you need.
+- Nested JSON keys need the `$` path form: `record->>'$.extra.cwd'`. A bare `'extra.cwd'` looks
+  for a key literally named `extra.cwd` and returns NULL.
+
+## Schema
+
+```sql
+events(
+  id          INTEGER PRIMARY KEY, -- grows with every insert; "event id"
+  epoch_ms    INTEGER,             -- when it happened
+  event       TEXT,                -- event name, see below
+  tool_use_id TEXT,                -- pairs a call's PreToolUse with its PostToolUse(Failure)
+  record      TEXT                 -- the whole event as JSON
+)
+summaries(event_id, summary)  -- one plain-English sentence per finished call,
+                              -- keyed by its PreToolUse id; may be missing
+```
+
+The file is the session (`sessions/<session-id>.db`); `record->>'session_id'` repeats its id.
+
+`event` is one of `SessionStart`, `UserPromptSubmit`, `PreToolUse`, `PostToolUse`,
+`PostToolUseFailure`, `SubagentStart`, `SubagentStop`, `Stop`, `AssistantMessage`.
+
+Fields of `record`:
+
+| Field | Meaning |
+| --- | --- |
+| `agent_id` | `main`, or the subagent's id |
+| `agent_type` | `main`, or the subagent type (set on `SubagentStart`; often null elsewhere) |
+| `tool_name`, `input` | the tool and its input (`PreToolUse`) |
+| `status` | `started`, `ok` or `error` |
+| `duration_ms`, `response`, `error` | on `PostToolUse` / `PostToolUseFailure` |
+| `prompt` | the user's prompt (`UserPromptSubmit`) |
+| `extra.last_assistant_message` | the reply that ended the turn (`Stop`, `SubagentStop`) |
+| `extra.cwd`, `extra.source` | on lifecycle events |
+| `message_id`, `texts`, `thinking`, `tool_use_ids`, `usage`, `model` | on `AssistantMessage` |
+
+A field longer than 8000 characters is stored as `{"truncated": true, "original_length": n,
+"head": "<first 8000 chars>"}`. Read such fields with
+`coalesce(record->>'$.prompt.head', record->>'$.prompt')`. For a clipped `input`, `head` is the
+start of the input's JSON text, so fields like `$.input.file_path` are NULL; the files recipe
+below shows how to pull a value out of `head`.
+
+A tool call is two events with the same `tool_use_id`. Its `PreToolUse` id is the call's id:
+summaries are keyed by it and the viewer shows it.
+
+## Recipes
+
+**Outline: one row per prompt** (start here)
+
+```sql
+WITH p AS (
+  SELECT id, epoch_ms, coalesce(record->>'$.prompt.head', record->>'$.prompt') AS prompt,
+         lead(id, 1, 9e18) OVER (ORDER BY id) AS next_id
+  FROM events WHERE event = 'UserPromptSubmit'
+)
+SELECT p.id AS turn_id,
+       datetime(p.epoch_ms / 1000, 'unixepoch', 'localtime') AS at,
+       substr(p.prompt, 1, 200) AS prompt,
+       (SELECT count(*) FROM events e WHERE e.id > p.id AND e.id < p.next_id AND e.event = 'PreToolUse') AS calls,
+       (SELECT count(*) FROM events e WHERE e.id > p.id AND e.id < p.next_id AND e.event = 'PostToolUseFailure') AS errors,
+       (SELECT substr(e.record->>'$.extra.last_assistant_message', 1, 300) FROM events e
+         WHERE e.id > p.id AND e.id < p.next_id AND e.event = 'Stop' ORDER BY e.id DESC LIMIT 1) AS reply
+FROM p ORDER BY p.id LIMIT 50;
+```
+
+A turn's events are those with `turn_id < id < next turn_id`.
+
+**Failed calls, with what was attempted**
+
+```sql
+SELECT f.id, f.record->>'$.agent_id' AS agent, f.record->>'$.tool_name' AS tool,
+       substr(pre.record->>'$.input', 1, 300) AS input,
+       substr(f.record->>'$.error', 1, 300) AS error
+FROM events f
+LEFT JOIN events pre ON pre.tool_use_id = f.tool_use_id AND pre.event = 'PreToolUse'
+WHERE f.event = 'PostToolUseFailure'
+ORDER BY f.id LIMIT 30;
+```
+
+**Files changed**
+
+```sql
+WITH w AS (
+  SELECT id, record->>'$.tool_name' AS tool, record->>'$.input.file_path' AS path,
+         -- a clipped input keeps only `head`, the start of its JSON text: take the path from there
+         substr(record->>'$.input.head', instr(record->>'$.input.head', '"file_path"') + 11) AS rest
+  FROM events
+  WHERE event = 'PreToolUse' AND record->>'$.tool_name' IN ('Edit', 'Write', 'MultiEdit', 'NotebookEdit')
+), r AS (
+  SELECT *, substr(rest, instr(rest, '"') + 1) AS tail FROM w
+)
+SELECT coalesce(path, substr(tail, 1, instr(tail, '"') - 1)) AS file, tool, group_concat(id) AS call_ids
+FROM r GROUP BY file, tool ORDER BY min(id);
+```
+
+**Time and errors per tool**
+
+```sql
+SELECT record->>'$.tool_name' AS tool, count(*) AS calls,
+       sum(event = 'PostToolUseFailure') AS errors, sum(record->>'$.duration_ms') AS total_ms
+FROM events WHERE event IN ('PostToolUse', 'PostToolUseFailure')
+GROUP BY tool ORDER BY calls DESC;
+```
+
+**Slowest calls**
+
+```sql
+SELECT pre.id AS call_id, post.record->>'$.tool_name' AS tool, post.record->>'$.duration_ms' AS ms,
+       substr(pre.record->>'$.input', 1, 150) AS input
+FROM events post
+JOIN events pre ON pre.tool_use_id = post.tool_use_id AND pre.event = 'PreToolUse'
+WHERE post.event IN ('PostToolUse', 'PostToolUseFailure') AND post.record->>'$.duration_ms' IS NOT NULL
+ORDER BY post.record->>'$.duration_ms' DESC LIMIT 10;
+```
+
+`duration_ms` is a JSON number, so `->>` returns an integer and the sort is numeric.
+
+**Subagents**
+
+```sql
+SELECT s.record->>'$.agent_id' AS agent, s.record->>'$.agent_type' AS type,
+       datetime(s.epoch_ms / 1000, 'unixepoch', 'localtime') AS started,
+       (SELECT count(*) FROM events e WHERE e.record->>'$.agent_id' = s.record->>'$.agent_id' AND e.event = 'PreToolUse') AS calls,
+       (SELECT count(*) FROM events e WHERE e.record->>'$.agent_id' = s.record->>'$.agent_id' AND e.event = 'PostToolUseFailure') AS errors
+FROM events s WHERE s.event = 'SubagentStart'
+ORDER BY s.id LIMIT 30;
+```
+
+**Search for text** (in inputs, outputs, errors and prompts)
+
+```sql
+SELECT id, event, record->>'$.tool_name' AS tool, substr(record->>'$.input', 1, 200) AS input
+FROM events WHERE record LIKE '%hook.rs%' AND event = 'PreToolUse'
+ORDER BY id LIMIT 20;
+```
+
+**One call in full** (replace `:id` with any of its event ids)
+
+```sql
+SELECT e.id, e.event, e.record->>'$.tool_name' AS tool, e.record->>'$.status' AS status,
+       e.record->>'$.duration_ms' AS ms,
+       substr(e.record->>'$.input', 1, 2000) AS input,
+       substr(e.record->>'$.response', 1, 2000) AS response,
+       substr(e.record->>'$.error', 1, 2000) AS error,
+       s.summary
+FROM events e LEFT JOIN summaries s ON s.event_id = e.id
+WHERE e.tool_use_id = (SELECT tool_use_id FROM events WHERE id = :id)
+ORDER BY e.id;
+```
+
+## The model's text
+
+`AssistantMessage` events hold what the model wrote between tool calls. One message can arrive
+as several events (one per block) with the same `message_id`; read them in `id` order:
+
+```sql
+SELECT id, record->>'$.agent_id' AS agent, record->>'$.message_id' AS message,
+       substr(record->>'$.texts', 1, 500) AS texts, record->>'$.tool_use_ids' AS asked_for
+FROM events WHERE event = 'AssistantMessage'
+ORDER BY id DESC LIMIT 20;
+```
+
+Sessions recorded before Ichnos logged model text have none; `ichnos import claude-code <id>`
+adds it for Claude Code sessions whose transcript still exists.
