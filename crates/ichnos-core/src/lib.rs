@@ -7,9 +7,11 @@
 pub mod catalog;
 pub mod error_log;
 pub mod event;
+pub mod instance;
+pub mod llm;
+pub mod log;
 pub mod store;
 pub mod summarizer;
-pub mod transcript;
 
 /// Folder of session databases inside the data directory.
 pub const SESSIONS_DIR: &str = "sessions";
