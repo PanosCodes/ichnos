@@ -68,6 +68,15 @@ pub fn summarize(input: &Value) -> String {
     }
 }
 
+/// The skill name to show as a tag for a Skill tool call.
+#[must_use]
+pub fn skill_name(call: &Call) -> Option<&str> {
+    (call.tool_name() == Some("Skill"))
+        .then(|| call.input().get("skill").and_then(Value::as_str))
+        .flatten()
+        .filter(|name| !name.is_empty())
+}
+
 /// A duration: `850ms`, `4.2s`, `3m 5s`.
 #[must_use]
 pub fn duration(ms: i64) -> String {
@@ -348,6 +357,35 @@ pub(crate) mod tests {
         assert_eq!(
             summarize(&json!({"truncated": true, "head": "start…"})),
             "start…"
+        );
+    }
+
+    #[test]
+    fn skill_name_only_reads_non_empty_skill_tool_inputs() {
+        use std::sync::Arc;
+
+        fn call(tool_name: &str, input: &Value) -> Call {
+            let record = json!({
+                "event": "PreToolUse",
+                "epoch_ms": 1,
+                "tool_use_id": "t1",
+                "tool_name": tool_name,
+                "input": input
+            });
+            let event = Arc::new(ichnos_core::event::Event::parse(1, &record.to_string()).unwrap());
+            crate::call::pair_calls(&[event]).remove(0)
+        }
+
+        assert_eq!(
+            skill_name(&call("Skill", &json!({"skill": "rust-best-practices"}))),
+            Some("rust-best-practices")
+        );
+        for input in [json!({}), json!({"skill": ""}), json!({"skill": 42})] {
+            assert_eq!(skill_name(&call("Skill", &input)), None);
+        }
+        assert_eq!(
+            skill_name(&call("Bash", &json!({"skill": "not-a-skill"}))),
+            None
         );
     }
 
