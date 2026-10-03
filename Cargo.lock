@@ -329,6 +329,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "ichnos-model"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "ichnos-core",
+ "serde",
+ "serde_json",
+ "tempfile",
+]
+
+[[package]]
 name = "indexmap"
 version = "2.14.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"

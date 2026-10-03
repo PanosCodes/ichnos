@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/ichnos", "crates/ichnos-core"]
+members = ["crates/ichnos", "crates/ichnos-core", "crates/ichnos-model"]
 
 [workspace.package]
 version = "0.1.0"
@@ -10,6 +10,7 @@ publish = false
 
 [workspace.dependencies]
 ichnos-core = { path = "crates/ichnos-core" }
+ichnos-model = { path = "crates/ichnos-model" }
 rusqlite = { version = "0.40", features = ["bundled"] }
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 clap = { version = "4.6", features = ["derive", "env"] }
