@@ -1,2 +1,21 @@
 [tools]
 rust = "stable"
+
+[tasks.install]
+description = "Build and install ichnos and ichnos-app into ~/.cargo/bin"
+run = [
+  "cargo install --path crates/ichnos",
+  "cargo install --path crates/ichnos-app",
+]
+
+[tasks.app]
+description = "Run the viewer from source"
+run = "cargo run -p ichnos-app"
+
+[tasks.check]
+description = "Format check, lint and test everything"
+run = [
+  "cargo fmt --check",
+  "cargo clippy --all-targets -- -D warnings",
+  "cargo test",
+]
