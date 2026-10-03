@@ -1,5 +1,6 @@
 //! The tree: one row per prompt, expandable into calls, model steps and subagents.
 
+use accesskit::Role;
 use std::ops::Range;
 
 use gpui_kit::TestSupportExt as _;
@@ -101,6 +102,8 @@ impl Viewer {
 
         div()
             .id(("row", row.id_index()))
+            .role(Role::Button)
+            .aria_label(format!("{}: {}", label.chip, one_line(&label.text)))
             // Rows are laid out one by one; without a width each fits its own text
             // and the columns stop lining up.
             .w_full()
@@ -161,6 +164,8 @@ impl Viewer {
                         d.child(
                             div()
                                 .id(("caret", row.id_index()))
+                                .role(Role::Button)
+                                .aria_label("Expand or collapse")
                                 .flex_none()
                                 .mr_1()
                                 .text_color(color(theme::PURPLE))
@@ -293,6 +298,8 @@ impl Viewer {
 
         div()
             .id(("turn", row.id_index()))
+            .role(Role::Button)
+            .aria_label(format!("Turn: {}", one_line(&label.text)))
             // Rows are laid out one by one; without a width each fits its own text
             // and the columns stop lining up.
             .w_full()

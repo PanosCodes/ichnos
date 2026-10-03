@@ -3,6 +3,7 @@
 //!
 //! Cards have fixed sizes, so the layout is computed here and the curves are painted from it.
 
+use accesskit::Role;
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
     AnyElement, Context, FontWeight, InteractiveElement as _, IntoElement, MouseButton,
@@ -433,6 +434,8 @@ impl Viewer {
                     .child(
                         div()
                             .id("zoom-out")
+                            .role(Role::Button)
+                            .aria_label("Zoom out")
                             .px_2()
                             .py_1()
                             .cursor_pointer()
@@ -446,6 +449,8 @@ impl Viewer {
                     .child(
                         div()
                             .id("zoom-reset")
+                            .role(Role::Button)
+                            .aria_label("Reset zoom")
                             .w(px(44.))
                             .py_1()
                             .flex()
@@ -462,6 +467,8 @@ impl Viewer {
                     .child(
                         div()
                             .id("zoom-in")
+                            .role(Role::Button)
+                            .aria_label("Zoom in")
                             .px_2()
                             .py_1()
                             .border_r_1()
@@ -477,6 +484,8 @@ impl Viewer {
                     .child(
                         div()
                             .id("center-graph")
+                            .role(Role::Button)
+                            .aria_label("Center graph")
                             .px_2()
                             .py_1()
                             .border_r_1()
@@ -492,6 +501,8 @@ impl Viewer {
                     .child(
                         div()
                             .id("sort-time")
+                            .role(Role::Button)
+                            .aria_label("Sort tools by time")
                             .px_2()
                             .py_1()
                             .cursor_pointer()
@@ -507,6 +518,8 @@ impl Viewer {
                     .child(
                         div()
                             .id("sort-count")
+                            .role(Role::Button)
+                            .aria_label("Sort tools by count")
                             .px_2()
                             .py_1()
                             .border_l_1()
@@ -556,6 +569,8 @@ impl Viewer {
 
         div()
             .id(("card", index))
+            .role(Role::Button)
+            .aria_label(facts.name.clone())
             .absolute()
             .left(u(at.x))
             .top(u(at.y))

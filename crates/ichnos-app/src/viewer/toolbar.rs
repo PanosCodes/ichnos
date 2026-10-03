@@ -1,6 +1,7 @@
 //! The toolbar: session picker, view switch, filter, error jump, expand/collapse, Ask and the
 //! connection pill; plus the stats line and the key bar around the rows.
 
+use accesskit::Role;
 use gpui_kit::component::input::{self, Input};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
@@ -80,6 +81,8 @@ impl Viewer {
             .child(
                 div()
                     .id("picker")
+                    .role(Role::Button)
+                    .aria_label("Switch session")
                     .flex()
                     .flex_row()
                     .flex_none()
@@ -118,6 +121,9 @@ impl Viewer {
                         let on = self.state.view() == view;
                         div()
                             .id(view.label())
+                            .role(Role::Tab)
+                            .aria_label(view.label())
+                            .aria_selected(on)
                             .px(px(10.))
                             .py(px(3.))
                             .rounded(px(theme::R_TAG))
@@ -154,6 +160,8 @@ impl Viewer {
                     .child(
                         div()
                             .id("model-chip")
+                            .role(Role::Button)
+                            .aria_label("Toggle model steps")
                             .flex_none()
                             .px_1p5()
                             .rounded(px(theme::R_TAG))
@@ -192,6 +200,8 @@ impl Viewer {
                     .child(if has_query {
                         div()
                             .id("clear-filter")
+                            .role(Role::Button)
+                            .aria_label("Clear filter")
                             .cursor_pointer()
                             .on_click(
                                 cx.listener(|this, _, window, cx| this.set_query("", window, cx)),
@@ -205,6 +215,8 @@ impl Viewer {
             .child(
                 div()
                     .id("errors")
+                    .role(Role::Button)
+                    .aria_label("Next error")
                     .flex()
                     .flex_none()
                     .items_center()
@@ -247,6 +259,8 @@ impl Viewer {
                     .child(
                         div()
                             .id("expand")
+                            .role(Role::Button)
+                            .aria_label("Expand all")
                             .px_2()
                             .py_1()
                             .cursor_pointer()
@@ -261,6 +275,8 @@ impl Viewer {
                     .child(
                         div()
                             .id("collapse")
+                            .role(Role::Button)
+                            .aria_label("Collapse all")
                             .px_2()
                             .py_1()
                             .border_l_1()
@@ -278,6 +294,8 @@ impl Viewer {
             .child(
                 div()
                     .id("ask")
+                    .role(Role::Button)
+                    .aria_label("Ask about this session")
                     .flex()
                     .flex_none()
                     .items_center()
@@ -426,6 +444,8 @@ impl Viewer {
                     .child(
                         div()
                             .id("follow")
+                            .role(Role::Button)
+                            .aria_label("Follow newest session")
                             .cursor_pointer()
                             .when_else(
                                 follow,
@@ -450,6 +470,8 @@ impl Viewer {
                     .child(
                         div()
                             .id("tail")
+                            .role(Role::Button)
+                            .aria_label("Auto-scroll to newest")
                             .cursor_pointer()
                             .when_else(
                                 tail,

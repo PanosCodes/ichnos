@@ -1,6 +1,7 @@
 //! The `⌘K` session switcher: every session with its first prompt; type to filter, arrows and
 //! Enter (or a click) to open one.
 
+use accesskit::Role;
 use gpui_kit::component::input::{self, Input, InputEvent, InputState};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
@@ -220,6 +221,11 @@ fn session_row(
     let errors = entry.overview().errors;
     div()
         .id(("session", ix))
+        .role(Role::Button)
+        .aria_label(description.as_deref().map_or_else(
+            || "Session".to_owned(),
+            |text| format!("Session: {}", super::one_line(text)),
+        ))
         // Rows are laid out one by one; without a width each fits its own text
         // and the columns stop lining up.
         .w_full()
