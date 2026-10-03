@@ -17,9 +17,10 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
+use gpui_kit::TestSupportExt as _;
 use gpui_kit::component::input::{InputEvent, InputState};
 use gpui_kit::{
-    App, AppContext as _, ClipboardItem, Context, Entity, FocusHandle, Focusable,
+    AnyElement, App, AppContext as _, ClipboardItem, Context, Entity, FocusHandle, Focusable,
     InteractiveElement as _, IntoElement, KeyBinding, ParentElement as _, Render, ScrollStrategy,
     SharedString, Styled as _, Subscription, UniformListScrollHandle, Window, actions, div, px,
 };
@@ -178,6 +179,27 @@ pub struct Viewer {
 }
 
 impl Viewer {
+    /// The skill name as a compact metadata tag.
+    pub(super) fn skill_tag(name: &str) -> AnyElement {
+        div()
+            .id("skill-tag")
+            .flex_none()
+            .max_w(px(140.))
+            .px(px(5.))
+            .py(px(2.))
+            .border_1()
+            .border_color(color(theme::PURPLE_LINE))
+            .rounded(px(theme::R_TAG))
+            .text_size(px(theme::FS_TINY))
+            .text_color(color(theme::PURPLE_TEXT))
+            .truncate()
+            .whitespace_nowrap()
+            .bg(color(theme::PURPLE_BG))
+            .child(name.to_owned())
+            .test_support()
+            .into_any_element()
+    }
+
     /// A viewer on `options`, polling in the background.
     pub fn new(options: Options, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let sessions_dir = options.data_dir.join(ichnos_core::SESSIONS_DIR);

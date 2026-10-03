@@ -8,7 +8,7 @@ use gpui_kit::{
     StatefulInteractiveElement as _, Styled as _, div, px, uniform_list,
 };
 use ichnos_core::event::Status;
-use ichnos_model::labels::{clock, duration, summarize};
+use ichnos_model::labels::{clock, duration, skill_name, summarize};
 
 use super::tree::empty;
 use super::{ROW_HEIGHT, Viewer, one_line};
@@ -112,7 +112,17 @@ impl Viewer {
             .child(cell(2).child(call.tool_name().unwrap_or(call.name()).to_owned()))
             .child(cell(3).child(call.status().map(Status::as_str).unwrap_or_default()))
             .child(mono(cell(4)).child(dur.map(duration).unwrap_or_default()))
-            .child(cell(5).when(ai.is_none(), mono).child(one_line(&what)))
+            .child(
+                cell(5)
+                    .when(ai.is_none(), mono)
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap(px(6.))
+                    .overflow_hidden()
+                    .child(div().flex_1().min_w_0().truncate().child(one_line(&what)))
+                    .when_some(skill_name(call), |d, name| d.child(Viewer::skill_tag(name))),
+            )
             .into_any_element()
     }
 }

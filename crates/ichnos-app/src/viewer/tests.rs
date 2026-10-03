@@ -49,6 +49,11 @@ fn session() -> Vec<Value> {
                "extra": {"last_assistant_message": "found it"}}),
         json!({"event": "PostToolUse", "epoch_ms": 2100, "tool_use_id": "agent-call", "status": "ok",
                "response": {"agentId": "a1"}}),
+        json!({"event": "PreToolUse", "epoch_ms": 2200, "tool_use_id": "skill-use",
+               "tool_name": "Skill", "input": {"skill": "rust-best-practices"},
+               "agent_id": "main", "status": "started"}),
+        json!({"event": "PostToolUse", "epoch_ms": 2300, "tool_use_id": "skill-use",
+               "status": "ok"}),
         json!({"event": "Stop", "epoch_ms": 3000, "agent_id": "main",
                "extra": {"last_assistant_message": "fixed"}}),
     ]
@@ -93,11 +98,35 @@ fn a_recorded_session_loads_into_the_tree(cx: &mut TestAppContext) {
     let (viewer, mut visual) = open(cx, dir.path());
     visual.update(|_, cx| {
         let viewer = viewer.read(cx);
-        assert_eq!(viewer.data().events().len(), 10);
-        assert_eq!(viewer.model.stats().calls, 3);
+        assert_eq!(viewer.data().events().len(), 12);
+        assert_eq!(viewer.model.stats().calls, 4);
         // The only turn is the last one, so it starts open.
         assert!(viewer.rows.len() > 1);
     });
+}
+
+#[gpui_kit::test]
+fn skill_use_rows_show_the_skill_tag_in_tree_and_table(cx: &mut TestAppContext) {
+    use gpui_kit::test::TestWindowExt as _;
+
+    let dir = tempfile::tempdir().unwrap();
+    let (_viewer, mut visual) = open(cx, dir.path());
+    let tag_is_visible = |visual: &mut VisualTestContext| {
+        visual.update(|window, cx| {
+            window.render_frame(cx);
+            f32::from(window.find("skill-tag").bounds().size.width) > 0.
+        })
+    };
+    assert!(
+        tag_is_visible(&mut visual),
+        "Tree view should show the skill tag"
+    );
+
+    press(&mut visual, "b");
+    assert!(
+        tag_is_visible(&mut visual),
+        "Table view should show the skill tag"
+    );
 }
 
 #[gpui_kit::test]
