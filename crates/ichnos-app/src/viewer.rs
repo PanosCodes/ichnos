@@ -21,8 +21,9 @@ use gpui_kit::TestSupportExt as _;
 use gpui_kit::component::input::{InputEvent, InputState};
 use gpui_kit::{
     AnyElement, App, AppContext as _, ClipboardItem, Context, Entity, FocusHandle, Focusable,
-    InteractiveElement as _, IntoElement, KeyBinding, ParentElement as _, Render, ScrollStrategy,
-    SharedString, Styled as _, Subscription, UniformListScrollHandle, Window, actions, div, px,
+    InteractiveElement as _, IntoElement, KeyBinding, MouseButton, MouseDownEvent, MouseMoveEvent,
+    MouseUpEvent, ParentElement as _, Render, ScrollStrategy, SharedString, Styled as _,
+    Subscription, UniformListScrollHandle, Window, actions, div, px,
 };
 use ichnos_core::catalog::{Catalog, SessionEntry};
 use ichnos_core::instance::{Command, Listener};
@@ -702,6 +703,40 @@ impl Viewer {
     }
 }
 
+impl Viewer {
+    /// The draggable divider between the main pane and the right-hand panel; double-click
+    /// resets the panel's width.
+    fn render_panel_handle(cx: &mut Context<Self>) -> impl IntoElement {
+        div()
+            .id("panel-handle")
+            .flex_none()
+            .w(px(5.))
+            .border_l_1()
+            .border_color(color(theme::LINE))
+            .cursor_col_resize()
+            .hover(|style| style.bg(color(theme::LINE)))
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|this, event: &MouseDownEvent, _, cx| {
+                    if event.click_count >= 2 {
+                        this.state.panel_mut().reset();
+                    } else {
+                        this.state.panel_mut().start(f32::from(event.position.x));
+                    }
+                    cx.notify();
+                }),
+            )
+            .test_support()
+    }
+
+    fn end_panel_drag(&mut self, cx: &mut Context<Self>) {
+        if self.state.panel().is_dragging() {
+            self.state.panel_mut().end();
+            cx.notify();
+        }
+    }
+}
+
 impl Focusable for Viewer {
     fn focus_handle(&self, _: &App) -> FocusHandle {
         self.focus.clone()
@@ -723,6 +758,7 @@ impl Render for Viewer {
                 .flex_1()
                 .min_h_0()
                 .child(self.render_graph(cx))
+                .child(Self::render_panel_handle(cx))
                 .child(self.render_agent_inspector(cx)),
             View::Tree | View::Table => div()
                 .flex()
@@ -735,8 +771,6 @@ impl Render for Viewer {
                         .flex_col()
                         .flex_1()
                         .min_w_0()
-                        .border_r_1()
-                        .border_color(color(theme::LINE))
                         .child(self.render_stats())
                         .child(match self.state.view() {
                             View::Table => self.render_table(cx).into_any_element(),
@@ -744,6 +778,7 @@ impl Render for Viewer {
                         })
                         .child(self.render_keybar(cx)),
                 )
+                .child(Self::render_panel_handle(cx))
                 .child(self.render_inspector(window, cx)),
         };
 
@@ -766,6 +801,24 @@ impl Render for Viewer {
                 this.toggle_switcher(window, cx);
             }))
             .on_action(cx.listener(Self::on_dismiss))
+            .on_mouse_move(cx.listener(|this, event: &MouseMoveEvent, window, cx| {
+                let window = f32::from(window.viewport_size().width);
+                if this
+                    .state
+                    .panel_mut()
+                    .drag_to(f32::from(event.position.x), window)
+                {
+                    cx.notify();
+                }
+            }))
+            .on_mouse_up(
+                MouseButton::Left,
+                cx.listener(|this, _: &MouseUpEvent, _, cx| this.end_panel_drag(cx)),
+            )
+            .on_mouse_up_out(
+                MouseButton::Left,
+                cx.listener(|this, _: &MouseUpEvent, _, cx| this.end_panel_drag(cx)),
+            )
             .on_action(cx.listener(|this, _: &ZoomIn, _, cx| {
                 this.zoom_graph(|pan| pan.zoom_by(graph::ZOOM_STEP), cx);
             }))

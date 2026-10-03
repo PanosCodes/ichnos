@@ -276,3 +276,28 @@ fn zooming_scales_the_graph_cards(cx: &mut TestAppContext) {
     press(&mut visual, "cmd-0");
     assert!((width(&mut visual) - 340.).abs() < 0.5);
 }
+
+#[gpui_kit::test]
+fn dragging_the_handle_resizes_the_panel(cx: &mut TestAppContext) {
+    use gpui_kit::test::TestWindowExt as _;
+    use gpui_kit::{point, px};
+
+    let dir = tempfile::tempdir().unwrap();
+    let (viewer, mut visual) = open(cx, dir.path());
+    press(&mut visual, "g");
+    let from = visual.update(|window, cx| {
+        window.render_frame(cx);
+        let bounds = window.find("panel-handle").bounds();
+        point(bounds.center().x, px(500.))
+    });
+    visual.update(|window, cx| {
+        window.drag(from, point(from.x - px(60.), px(500.)), cx);
+    });
+    settle(&mut visual);
+    visual.update(|_, cx| {
+        let state = &viewer.read(cx).state;
+        assert_eq!(state.panel().width(), 440.);
+        assert!(!state.panel().is_dragging());
+        assert_eq!(state.graph_pan().offset(), (0., 0.));
+    });
+}
