@@ -1,20 +1,37 @@
-//! Logs every Claude Code agent event to an SQLite database.
+//! Logs every event of a coding agent's session to an SQLite database and opens a live viewer
+//! on them.
 //!
-//! `ichnos hook` is the Claude Code hook (wired from the block in `hooks.json`).
-//! `ichnos install` / `uninstall` add or remove the `hooks.json` block in Claude Code's settings
-//! and the `skill/SKILL.md` skill next to it, which lets agents query the logs with SQL.
+//! `ichnos log` reads Ichnos events (JSON lines, see `ichnos_core::log`) from stdin: the one
+//! way in. `ichnos hook <adapter>` is the same for an agent whose hooks send their own payload;
+//! the adapter translates it (`claude-code`, wired from the block in `hooks.json`). When an event
+//! starts a session, both also run `ichnos open` in the background, which starts the viewer
+//! unless it's running.
+//! `ichnos open [<session>]` shows a session in the viewer app (`ichnos-app`), starting it if
+//! needed. `ichnos stop` quits it.
+//! `ichnos install` / `uninstall` wire an agent's hooks to `ichnos hook`, plus the
+//! `skill/SKILL.md` skill that lets agents query the logs with SQL.
 //!
-//! Each Claude Code session gets its own database, `~/.ichnos/sessions/<session-id>.db`.
+//! Each session gets its own database, `~/.ichnos/sessions/<session-id>.db`.
 
-mod hook;
-mod install;
+mod adapter;
+mod open;
 
+use std::fmt::Write as _;
 use std::fs;
+use std::io::{BufRead, Read};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
+use chrono::Utc;
 use clap::{Parser, Subcommand};
-use ichnos_core::error_log;
+use ichnos_core::error_log::{self, ERROR_LOG};
+use ichnos_core::instance::View;
+use ichnos_core::log::{Logged, Logger};
+use ichnos_core::store::SessionId;
+use serde_json::{Map, Value};
+
+use crate::adapter::Adapter;
+use crate::adapter::claude_code::{self, install};
 
 #[derive(Debug, Parser)]
 #[command(version, about)]
@@ -30,7 +47,30 @@ struct Cli {
 #[derive(Debug, Subcommand)]
 enum Command {
     /// Read one hook event from stdin and store it. Always exits 0.
-    Hook,
+    ///
+    /// A new session also opens the viewer on it, like `ichnos open <session>`, unless the
+    /// viewer is already running.
+    Hook {
+        /// Don't open the viewer when a session starts.
+        #[arg(long, env = "ICHNOS_NO_OPEN", value_parser = clap::builder::FalseyValueParser::new())]
+        no_open: bool,
+    },
+    /// Show the viewer app, starting `ichnos-app` in the background if it isn't running.
+    Open {
+        /// Session to show; the window stays on it [default: follow the newest session].
+        session: Option<SessionId>,
+        /// View to show: tree, graph or table.
+        #[arg(long)]
+        view: Option<View>,
+        /// Do nothing when the viewer is already running (how the hook runs it).
+        #[arg(long)]
+        unless_open: bool,
+        /// Start the viewer without the one-line Haiku summaries.
+        #[arg(long)]
+        no_summaries: bool,
+    },
+    /// Quit the viewer app.
+    Stop,
     /// Add the ichnos hooks to Claude Code's settings, so new sessions are logged, and the skill
     /// that lets agents query the logs.
     Install {
@@ -85,9 +125,15 @@ fn main() -> ExitCode {
     };
     // These don't touch the data directory.
     let command = match cli.command {
-        Command::Install { target } => return change_settings(target, install::install, true),
-        Command::Uninstall { target } => return change_settings(target, install::uninstall, false),
-        command @ Command::Hook => command,
+        Command::Install {
+            adapter: Adapter::ClaudeCode,
+            target,
+        } => return change_settings(target, install::install, true),
+        Command::Uninstall {
+            adapter: Adapter::ClaudeCode,
+            target,
+        } => return change_settings(target, install::uninstall, false),
+        command => command,
     };
     let Some(dir) = cli.dir.or_else(ichnos_core::default_data_dir) else {
         eprintln!("no data directory: set HOME, --dir or ICHNOS_DIR");
@@ -97,22 +143,153 @@ fn main() -> ExitCode {
     if let Err(err) = fs::create_dir_all(&sessions_dir) {
         // A hook still exits 0; there is nowhere to log the failure.
         eprintln!("could not create {}: {err}", sessions_dir.display());
-        return if matches!(command, Command::Hook) {
+        return if matches!(command, Command::Hook { .. }) {
             ExitCode::SUCCESS
         } else {
             ExitCode::FAILURE
         };
     }
     match command {
-        Command::Hook => {
+        Command::Hook { no_open } => {
             // Never break the agent loop: failures go to the error log and the hook exits 0.
-            if let Err(err) = hook::run(&sessions_dir, std::io::stdin().lock()) {
-                error_log::append(&dir, &format!("{err:?}"));
+            match hook::run(&sessions_dir, std::io::stdin().lock()) {
+                Ok(hook::Logged::SessionStarted(session)) if !no_open => {
+                    if let Err(err) = open::spawn(&dir, &session, &dir.join(ERROR_LOG)) {
+                        error_log::append(&dir, &format!("{err:?}"));
+                    }
+                }
+                Ok(_) => {}
+                Err(err) => error_log::append(&dir, &format!("{err:?}")),
             }
             ExitCode::SUCCESS
         }
+        Command::Open {
+            session,
+            view,
+            unless_open,
+            no_summaries,
+        } => match open::run(
+            &dir,
+            open::OpenArgs {
+                session: session.as_ref(),
+                view,
+                unless_open,
+                no_summaries,
+            },
+        ) {
+            Ok(open::Opened::Shown) => {
+                println!("Showing it in the running viewer");
+                ExitCode::SUCCESS
+            }
+            Ok(open::Opened::Started) => {
+                println!("Started the viewer");
+                ExitCode::SUCCESS
+            }
+            Ok(open::Opened::AlreadyOpen) => {
+                println!("The viewer is already running");
+                ExitCode::SUCCESS
+            }
+            Err(err) => {
+                // Run from the hook, this lands in the error log, so it gets a timestamp.
+                eprintln!("{} open failed: {err:?}", chrono::Utc::now().to_rfc3339());
+                ExitCode::FAILURE
+            }
+        },
+        Command::Stop => stop(&dir),
         Command::Install { .. } | Command::Uninstall { .. } => {
             unreachable!("handled above")
+        }
+    }
+}
+
+/// Store the Ichnos events on stdin, one per line. Never breaks the producer: failures go to the
+/// error log in `dir`.
+fn log_stdin(dir: &Path, sessions_dir: &Path, no_open: bool) {
+    let mut logger = Logger::new(sessions_dir);
+    for line in std::io::stdin().lock().lines() {
+        let result = line
+            .map_err(|err| format!("could not read stdin: {err}"))
+            .and_then(|text| parse_object(&text))
+            .and_then(|event| match event {
+                None => Ok(Logged::Stored),
+                Some(event) => logger
+                    .log(&event, Utc::now())
+                    .map_err(|err| format!("{err:?}")),
+            });
+        match result {
+            Ok(outcome) => open_if_started(dir, &outcome, no_open),
+            Err(err) => error_log::append(dir, &err),
+        }
+    }
+}
+
+/// Store the one hook payload on stdin through `adapter`. Never breaks the agent loop: failures
+/// go to the error log in `dir`.
+fn hook(dir: &Path, sessions_dir: &Path, adapter: Adapter, no_open: bool) {
+    let mut raw = String::new();
+    let result = std::io::stdin()
+        .read_to_string(&mut raw)
+        .map_err(|err| format!("could not read the hook payload from stdin: {err}"))
+        .and_then(|_| parse_object(&raw))
+        .and_then(|payload| {
+            let payload = payload.unwrap_or_default();
+            let mut logger = Logger::new(sessions_dir);
+            match adapter {
+                Adapter::ClaudeCode => claude_code::hook(&mut logger, &payload, Utc::now()),
+            }
+            .map_err(|err| format!("{err:?}"))
+        });
+    match result {
+        Ok(outcome) => open_if_started(dir, &outcome, no_open),
+        Err(err) => error_log::append(dir, &err),
+    }
+}
+
+/// `line` parsed as a JSON object; `None` for a blank line.
+fn parse_object(line: &str) -> Result<Option<Map<String, Value>>, String> {
+    if line.trim().is_empty() {
+        return Ok(None);
+    }
+    serde_json::from_str(line)
+        .map(Some)
+        .map_err(|err| format!("the input is not a JSON object: {err}"))
+}
+
+/// Open the viewer on a session that `logged` says just started, unless `no_open`.
+fn open_if_started(dir: &Path, logged: &Logged, no_open: bool) {
+    if let Logged::SessionStarted(session) = logged
+        && !no_open
+        && let Err(err) = open::spawn(dir, session, &dir.join(ERROR_LOG))
+    {
+        error_log::append(dir, &format!("{err:?}"));
+    }
+}
+
+/// `err` and its causes on one line, separated by `: `.
+fn error_chain(err: &dyn std::error::Error) -> String {
+    let mut text = err.to_string();
+    let mut source = err.source();
+    while let Some(cause) = source {
+        let _ = write!(text, ": {cause}");
+        source = cause.source();
+    }
+    text
+}
+
+/// Quit the viewer app serving data directory `dir` and say what happened.
+fn stop(dir: &Path) -> ExitCode {
+    match open::stop(dir) {
+        Ok(true) => {
+            println!("Stopped the ichnos viewer");
+            ExitCode::SUCCESS
+        }
+        Ok(false) => {
+            println!("No ichnos viewer is running");
+            ExitCode::SUCCESS
+        }
+        Err(err) => {
+            eprintln!("{err}");
+            ExitCode::FAILURE
         }
     }
 }
@@ -134,7 +311,7 @@ fn change_settings(
         (Ok(install::Change::Updated), true) => {
             println!("Added the ichnos hooks to {shown} and the ichnos skill to {skill}.");
             println!(
-                "New Claude Code sessions will be logged; agents can query the logs with the skill."
+                "New Claude Code sessions will be logged and open in the viewer; agents can query the logs with the skill."
             );
         }
         (Ok(install::Change::Unchanged), true) => {

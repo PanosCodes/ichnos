@@ -1,17 +1,18 @@
-//! What the Ichnos binaries share: the per-session SQLite store, the live feed that tails a
-//! session, the session model, the sessions catalog and the Haiku summarizer.
+//! What both Ichnos binaries share: the Ichnos event format and its one writer ([`log`]), the
+//! per-session SQLite store, the sessions catalog, the app socket protocol and the debug account
+//! format. It runs on every hook event, so it has no async runtime and no viewer logic; the
+//! viewer's model lives in `ichnos-model`.
 //!
-//! The `ichnos` CLI writes to the store from the Claude Code hook; a viewer reads it through
-//! [`feed::Feed`] and [`catalog::Catalog`].
+//! Nothing here knows which coding agent produced a session. The `ichnos` CLI's adapters
+//! translate an agent's own payloads into Ichnos events and hand them to [`log::Logger`]; the
+//! viewer reads them back through `ichnos-model`'s feed and [`catalog::Catalog`].
 
 pub mod catalog;
 pub mod error_log;
 pub mod event;
 pub mod instance;
-pub mod llm;
 pub mod log;
 pub mod store;
-pub mod summarizer;
 
 /// Folder of session databases inside the data directory.
 pub const SESSIONS_DIR: &str = "sessions";

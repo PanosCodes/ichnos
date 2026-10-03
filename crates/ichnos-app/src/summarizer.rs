@@ -14,8 +14,8 @@ use serde_json::{Map, Value};
 use thiserror::Error;
 
 use crate::llm::{Llm, LlmError};
-use crate::step::ASSISTANT_MESSAGE;
-use crate::store::{Row, SessionId, Store, StoreError};
+use ichnos_core::event::ASSISTANT_MESSAGE;
+use ichnos_core::store::{Row, SessionId, Store, StoreError};
 
 /// Entries sent to the model in one request.
 const BATCH_SIZE: usize = 12;
@@ -126,7 +126,7 @@ impl Summarizer {
                     Ok(did_work) => worked |= did_work,
                     // Keep the worker alive; the viewer just lacks summaries.
                     Err(err) => {
-                        crate::error_log::append(
+                        ichnos_core::error_log::append(
                             &self.inner.error_log_dir,
                             &format!("summarizer {session}: {err:?}"),
                         );
