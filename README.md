@@ -15,7 +15,7 @@ login), and you can swap in another command or turn it off.
 
 ### Requirements
 
-- macOS 11 or later. The viewer renders with Metal.
+- macOS 11 or later. The viewer renders with Metal, and CI builds and tests on macOS only.
 - The Xcode command line tools.
 - [mise](https://mise.jdx.dev), which installs the right Rust version.
 
