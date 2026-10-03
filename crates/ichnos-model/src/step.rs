@@ -6,10 +6,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
-use crate::event::MAIN_AGENT;
-
-/// The event name of a model message in the Ichnos event format.
-pub const ASSISTANT_MESSAGE: &str = "AssistantMessage";
+use ichnos_core::event::MAIN_AGENT;
 
 /// One assistant message, merged from its `AssistantMessage` events.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

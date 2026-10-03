@@ -15,8 +15,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use super::tail::{self, Line};
+use ichnos_core::event::ASSISTANT_MESSAGE;
 use ichnos_core::event::MAIN_AGENT;
-use ichnos_core::step::ASSISTANT_MESSAGE;
 use ichnos_core::store::SessionId;
 use serde_json::{Map, Value, json};
 

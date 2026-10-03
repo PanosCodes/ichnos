@@ -1,10 +1,12 @@
-//! What the Ichnos binaries share: the per-session SQLite store, the sessions catalog, the
-//! transcript tail and the Haiku summarizer.
+//! What the Ichnos binaries share: the per-session SQLite store, the live feed that tails a
+//! session, the session model, the sessions catalog and the Haiku summarizer.
 //!
-//! The `ichnos` CLI writes to the store from the Claude Code hook.
+//! The `ichnos` CLI writes to the store from the Claude Code hook; a viewer reads it through
+//! [`feed::Feed`] and [`catalog::Catalog`].
 
 pub mod catalog;
 pub mod error_log;
+pub mod event;
 pub mod store;
 pub mod summarizer;
 pub mod transcript;
