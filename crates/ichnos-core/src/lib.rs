@@ -4,6 +4,7 @@
 
 pub mod catalog;
 pub mod error_log;
+pub mod event;
 pub mod store;
 
 /// Folder of session databases inside the data directory.
