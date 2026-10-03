@@ -1,6 +1,7 @@
 //! The replay strip: every call and model step as a tick on one rail, with turn markers and the
 //! replay cursor; click to replay from there.
 
+use accesskit::Role;
 use std::cell::Cell;
 use std::rc::Rc;
 
@@ -70,9 +71,11 @@ impl Viewer {
 
         let strip_bounds: Rc<Cell<Bounds<Pixels>>> = Rc::default();
         let measured = Rc::clone(&strip_bounds);
-        let button = |id: &'static str, text: &'static str| {
+        let button = |id: &'static str, label: &'static str, text: &'static str| {
             div()
                 .id(id)
+                .role(Role::Button)
+                .aria_label(label)
                 .px(px(7.))
                 .py(px(2.))
                 .border_1()
@@ -104,12 +107,17 @@ impl Viewer {
                     .text_color(color(theme::BTN))
                     .text_size(px(theme::FS_SMALL))
                     .child(
-                        button("prev", "◀")
+                        button("prev", "Step back", "◀")
                             .on_click(cx.listener(|this, _, _, cx| this.step(false, cx))),
                     )
                     .child(
                         button(
                             "play",
+                            if self.state.playing() {
+                                "Pause"
+                            } else {
+                                "Play"
+                            },
                             if self.state.playing() {
                                 "❚❚"
                             } else {
@@ -119,7 +127,7 @@ impl Viewer {
                         .on_click(cx.listener(|this, _, _, cx| this.toggle_play(cx))),
                     )
                     .child(
-                        button("live", "▶|")
+                        button("live", "Go live", "▶|")
                             .on_click(cx.listener(|this, _, _, cx| this.go_live(cx))),
                     ),
             )

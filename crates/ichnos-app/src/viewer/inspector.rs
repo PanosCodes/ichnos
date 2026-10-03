@@ -1,5 +1,6 @@
 //! The inspector: the selected row's Call tab, and the State, Files and Tokens tabs.
 
+use accesskit::Role;
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
     AnyElement, Context, Div, ElementId, FontWeight, InteractiveElement as _, IntoElement,
@@ -107,6 +108,9 @@ impl Viewer {
                         let on = id == tab;
                         div()
                             .id(SharedString::from(format!("tab-{id:?}")))
+                            .role(Role::Tab)
+                            .aria_label(name.clone())
+                            .aria_selected(on)
                             .pb(px(9.))
                             .cursor_pointer()
                             .when(on, |d| {
@@ -403,6 +407,8 @@ impl Viewer {
                         let key = node.key().clone();
                         div()
                             .id(("running", id.index()))
+                            .role(Role::Button)
+                            .aria_label("Reveal running call in tree")
                             .flex()
                             .flex_row()
                             .gap_2()
@@ -474,6 +480,8 @@ impl Viewer {
                     };
                     div()
                         .id(ElementId::Name(format!("file-{changed}-{i}").into()))
+                        .role(Role::Button)
+                        .aria_label(format!("Filter to {name}"))
                         .flex()
                         .flex_row()
                         .gap_2()
@@ -559,6 +567,8 @@ impl Viewer {
             let share = value as f32 / max as f32;
             div()
                 .id(("tokens", id.index()))
+                .role(Role::Button)
+                .aria_label("Reveal call in tree")
                 .flex()
                 .flex_row()
                 .items_center()
@@ -699,6 +709,8 @@ pub(super) fn badge(tone: Tone, text: impl Into<SharedString>) -> Div {
 fn link(id: SharedString, text: &'static str) -> gpui_kit::Stateful<Div> {
     div()
         .id(id)
+        .role(Role::Link)
+        .aria_label(text)
         .cursor_pointer()
         .hover(|s| s.text_color(color(theme::FG)))
         .child(text)
@@ -713,6 +725,8 @@ pub(super) fn button(
 ) -> gpui_kit::Stateful<Div> {
     div()
         .id(id)
+        .role(Role::Button)
+        .aria_label(text)
         .px(px(9.))
         .py_1()
         .border_1()
@@ -736,6 +750,8 @@ pub(super) fn button(
 fn around_row(which: &'static str, text: String) -> gpui_kit::Stateful<Div> {
     div()
         .id(which)
+        .role(Role::Button)
+        .aria_label(format!("{which}: {text}"))
         .flex()
         .flex_row()
         .gap_2()

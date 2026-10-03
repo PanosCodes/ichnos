@@ -1,5 +1,6 @@
 //! The table: every entry in time order, subagent start and stop events included.
 
+use accesskit::Role;
 use std::ops::Range;
 
 use gpui_kit::prelude::FluentBuilder as _;
@@ -89,6 +90,12 @@ impl Viewer {
         });
         div()
             .id(("table-row", ix))
+            .role(Role::Button)
+            .aria_label(format!(
+                "{}: {}",
+                call.tool_name().unwrap_or(call.name()),
+                one_line(&what)
+            ))
             // Rows are laid out one by one; without a width each fits its own text
             // and the columns stop lining up.
             .w_full()

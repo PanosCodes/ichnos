@@ -1,6 +1,7 @@
 //! "Ask agent": write a question, then copy a prompt that tells an agent where this session's
 //! database is and how to query it. The agent answers; Ichnos only builds the prompt.
 
+use accesskit::Role;
 use std::path::PathBuf;
 
 use gpui_kit::component::checkbox::Checkbox;
@@ -122,6 +123,8 @@ impl Viewer {
                     .child(
                         div()
                             .id("ask-close")
+                            .role(Role::Button)
+                            .aria_label("Close ask panel")
                             .ml_auto()
                             .text_size(px(theme::FS_TITLE))
                             .text_color(color(theme::DIM))
@@ -152,6 +155,8 @@ impl Viewer {
                                 let target = starters_target.clone();
                                 div()
                                     .id(("starter", i))
+                                    .role(Role::Button)
+                                    .aria_label(*starter)
                                     .px_2()
                                     .py(px(3.))
                                     .border_1()
@@ -218,6 +223,8 @@ impl Viewer {
                     .child(
                         div()
                             .id("ask-copy")
+                            .role(Role::Button)
+                            .aria_label("Copy prompt")
                             .ml_auto()
                             .flex_none()
                             .px(px(14.))

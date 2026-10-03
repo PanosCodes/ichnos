@@ -3320,6 +3320,7 @@ dependencies = [
 name = "ichnos-app"
 version = "0.1.0"
 dependencies = [
+ "accesskit",
  "chrono",
  "clap",
  "gpui-kit",
