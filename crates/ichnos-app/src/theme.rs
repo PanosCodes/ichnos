@@ -5,9 +5,8 @@ use crate::present::Tone;
 /// Monospace font for code, numbers and badges.
 pub const MONO: &str = "JetBrains Mono";
 
-/// Font size of badges, captions and column headers.
-pub const FS_TINY: f32 = 11.;
-/// Font size of dense body text, such as table rows and code.
+/// Font size of dense text: badges, captions, column headers, table rows and code. Nothing is
+/// smaller; captions set themselves apart by color and weight instead.
 pub const FS_SMALL: f32 = 12.;
 /// Font size of primary text: a 13px base.
 pub const FS_BASE: f32 = 13.;

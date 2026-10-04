@@ -45,7 +45,7 @@ impl Viewer {
                     .items_center()
                     .border_b_1()
                     .border_color(color(theme::LINE))
-                    .text_size(px(theme::FS_TINY))
+                    .text_size(px(theme::FS_SMALL))
                     .font_weight(FontWeight::MEDIUM)
                     .text_color(color(theme::DIM))
                     .children(

@@ -16,7 +16,7 @@ use ichnos_model::model::{Node, NodeKind};
 use super::{LONG_MS, ROW_HEIGHT, Viewer, one_line};
 use crate::present::{Tone, look, row_tokens};
 use crate::theme::{self, MONO, color, tone_bar, tone_icon, tone_text};
-use crate::view_state::TreeRow;
+use crate::view_state::{BARS_MIN_MAIN, TreeRow};
 
 impl Viewer {
     pub(super) fn render_tree(&self, cx: &mut Context<Self>) -> AnyElement {
@@ -31,9 +31,11 @@ impl Viewer {
         uniform_list(
             "tree",
             self.rows.len(),
-            cx.processor(|this, range: Range<usize>, _window, cx| {
+            cx.processor(|this, range: Range<usize>, window, cx| {
+                let window_width = f32::from(window.viewport_size().width);
+                let bars = this.state.panel().main_width(window_width) >= BARS_MIN_MAIN;
                 range
-                    .map(|ix| this.render_tree_row(this.rows[ix], cx))
+                    .map(|ix| this.render_tree_row(this.rows[ix], bars, cx))
                     .collect::<Vec<_>>()
             }),
         )
@@ -51,13 +53,13 @@ impl Viewer {
         .into_any_element()
     }
 
-    fn render_tree_row(&self, row: TreeRow, cx: &mut Context<Self>) -> AnyElement {
+    fn render_tree_row(&self, row: TreeRow, bars: bool, cx: &mut Context<Self>) -> AnyElement {
         let node = self.model.node(row.id);
         let selected = self.state.selected() == Some(node.key());
         let filtering = self.state.filter().is_active();
         let open = self.state.is_open(&self.model, row.id, filtering);
         if node.is_turn() {
-            return self.render_turn_row(row, node, open, selected, cx);
+            return self.render_turn_row(row, node, open, selected, bars, cx);
         }
         let id = row.id;
         let key = node.key().clone();
@@ -145,10 +147,10 @@ impl Viewer {
             )
             .child(
                 div()
-                    .w(px(46.))
+                    .w(px(52.))
                     .flex_none()
                     .font_family(MONO)
-                    .text_size(px(theme::FS_TINY))
+                    .text_size(px(theme::FS_SMALL))
                     .text_color(tone_text(look.tone))
                     .truncate()
                     .child(look.badge),
@@ -157,6 +159,8 @@ impl Viewer {
                 div()
                     .flex()
                     .flex_row()
+                    .items_center()
+                    .gap(px(6.))
                     .flex_1()
                     .min_w_0()
                     .overflow_hidden()
@@ -167,7 +171,6 @@ impl Viewer {
                                 .role(Role::Button)
                                 .aria_label("Expand or collapse")
                                 .flex_none()
-                                .mr_1()
                                 .text_color(color(theme::PURPLE))
                                 .on_click(cx.listener(move |this, _, _, cx| {
                                     cx.stop_propagation();
@@ -219,26 +222,28 @@ impl Viewer {
                     None => String::new(),
                 }),
             )
-            .child(
-                div()
-                    .relative()
-                    .w(px(160.))
-                    .flex_none()
-                    .h(px(7.))
-                    .bg(color(theme::ROW_LINE))
-                    .rounded(px(2.))
-                    .child(
-                        div()
-                            .absolute()
-                            .top_0()
-                            .bottom_0()
-                            .left(relative(left))
-                            .w(relative(width))
-                            .min_w(px(2.))
-                            .rounded(px(1.))
-                            .bg(tone_bar(look.tone)),
-                    ),
-            )
+            .when(bars, |d| {
+                d.child(
+                    div()
+                        .relative()
+                        .w(px(160.))
+                        .flex_none()
+                        .h(px(7.))
+                        .bg(color(theme::ROW_LINE))
+                        .rounded(px(2.))
+                        .child(
+                            div()
+                                .absolute()
+                                .top_0()
+                                .bottom_0()
+                                .left(relative(left))
+                                .w(relative(width))
+                                .min_w(px(2.))
+                                .rounded(px(1.))
+                                .bg(tone_bar(look.tone)),
+                        ),
+                )
+            })
             .test_support()
             .into_any_element()
     }
@@ -249,6 +254,7 @@ impl Viewer {
         node: &Node,
         open: bool,
         selected: bool,
+        bars: bool,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let label = label(node, self.summaries(), &self.model);
@@ -330,10 +336,10 @@ impl Viewer {
             }))
             .child(
                 div()
-                    .w(px(30.))
+                    .w(px(34.))
                     .flex_none()
                     .font_family(MONO)
-                    .text_size(px(theme::FS_TINY))
+                    .text_size(px(theme::FS_SMALL))
                     .whitespace_nowrap()
                     .text_color(color(if open { theme::BLUE_TEXT } else { theme::DIM }))
                     .child(format!("{number} {}", if open { "▾" } else { "▸" })),
@@ -404,20 +410,22 @@ impl Viewer {
                         if node.running() { "…" } else { "" }
                     )),
             )
-            .child(
-                div().w(px(160.)).flex_none().child(
-                    div()
-                        .h(px(6.))
-                        .w(relative(bar))
-                        .min_w(px(2.))
-                        .rounded(px(2.))
-                        .bg(color(if open {
-                            theme::BLUE_BAR
-                        } else {
-                            theme::TURN_BAR
-                        })),
-                ),
-            )
+            .when(bars, |d| {
+                d.child(
+                    div().w(px(160.)).flex_none().child(
+                        div()
+                            .h(px(6.))
+                            .w(relative(bar))
+                            .min_w(px(2.))
+                            .rounded(px(2.))
+                            .bg(color(if open {
+                                theme::BLUE_BAR
+                            } else {
+                                theme::TURN_BAR
+                            })),
+                    ),
+                )
+            })
             .test_support()
             .into_any_element()
     }

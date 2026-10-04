@@ -199,7 +199,7 @@ impl Viewer {
                             .border_color(color(theme::LINE))
                             .bg(color(theme::FIELD))
                             .font_family(MONO)
-                            .text_size(px(theme::FS_TINY))
+                            .text_size(px(theme::FS_SMALL))
                             .text_color(color(theme::TEXT_2))
                             .child(prompt),
                     ),

@@ -302,3 +302,52 @@ fn dragging_the_handle_resizes_the_panel(cx: &mut TestAppContext) {
         assert_eq!(state.graph_pan().offset(), (0., 0.));
     });
 }
+
+#[gpui_kit::test]
+fn the_help_overlay_and_the_panel_toggle_from_the_keyboard(cx: &mut TestAppContext) {
+    let dir = tempfile::tempdir().unwrap();
+    let (viewer, mut visual) = open(cx, dir.path());
+
+    press(&mut visual, "?");
+    visual.update(|_, cx| assert!(viewer.read(cx).help));
+    press(&mut visual, "escape");
+    visual.update(|_, cx| assert!(!viewer.read(cx).help));
+
+    press(&mut visual, "cmd-\\");
+    visual.update(|_, cx| assert!(!viewer.read(cx).state.panel().is_open()));
+    press(&mut visual, "cmd-\\");
+    visual.update(|_, cx| assert!(viewer.read(cx).state.panel().is_open()));
+}
+
+#[gpui_kit::test]
+fn the_arrow_keys_step_the_replay_cursor(cx: &mut TestAppContext) {
+    let dir = tempfile::tempdir().unwrap();
+    let (viewer, mut visual) = open(cx, dir.path());
+
+    press(&mut visual, "left");
+    let first = visual.update(|_, cx| viewer.read(cx).state.replay_at());
+    assert!(first.is_some());
+    press(&mut visual, "left");
+    let second = visual.update(|_, cx| viewer.read(cx).state.replay_at());
+    assert!(second < first);
+    press(&mut visual, "right");
+    visual.update(|_, cx| assert_eq!(viewer.read(cx).state.replay_at(), first));
+}
+
+#[gpui_kit::test]
+fn every_view_keeps_the_follow_toggle(cx: &mut TestAppContext) {
+    use gpui_kit::test::TestWindowExt as _;
+
+    let dir = tempfile::tempdir().unwrap();
+    let (_viewer, mut visual) = open(cx, dir.path());
+    for key in ["t", "g", "b"] {
+        press(&mut visual, key);
+        visual.update(|window, cx| {
+            window.render_frame(cx);
+            assert!(
+                f32::from(window.find("follow").bounds().size.width) > 0.,
+                "the follow toggle is missing after {key}"
+            );
+        });
+    }
+}

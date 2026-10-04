@@ -81,9 +81,20 @@ impl Viewer {
         };
         let body = match tab {
             InspectorTab::Call => self.render_call_tab(node, prev, next, cx),
-            InspectorTab::State => self.render_state_tab(&state, at, why, cx),
+            InspectorTab::State => self.render_state_tab(&state, cx),
             InspectorTab::Files => Self::render_files_tab(&state, cx),
             InspectorTab::Tokens => self.render_tokens_tab(cx),
+        };
+        // Every tab but Call describes the whole session, not the row: say at which moment.
+        let t0 = self.bounds.map_or(0, |b| b.t0);
+        let scope = match tab {
+            InspectorTab::Call => None,
+            InspectorTab::State | InspectorTab::Files => Some(format!(
+                "Session at {} · +{} · {why}",
+                clock(at),
+                duration((at - t0).max(0))
+            )),
+            InspectorTab::Tokens => Some("Whole session".to_owned()),
         };
         div()
             .flex()
@@ -126,6 +137,22 @@ impl Viewer {
                             .child(name)
                     })),
             )
+            .when_some(scope, |d, scope| {
+                d.child(
+                    div()
+                        .id("inspector-scope")
+                        .flex_none()
+                        .px_4()
+                        .py(px(6.))
+                        .border_b_1()
+                        .border_color(color(theme::SOFT_LINE))
+                        .font_family(MONO)
+                        .text_size(px(theme::FS_SMALL))
+                        .text_color(color(theme::MUTED))
+                        .truncate()
+                        .child(scope),
+                )
+            })
             .child(body)
     }
 
@@ -365,27 +392,9 @@ impl Viewer {
             .into_any_element()
     }
 
-    fn render_state_tab(
-        &self,
-        state: &StateAt,
-        at: i64,
-        why: &str,
-        cx: &mut Context<Self>,
-    ) -> AnyElement {
-        let t0 = self.bounds.map_or(0, |b| b.t0);
+    fn render_state_tab(&self, state: &StateAt, cx: &mut Context<Self>) -> AnyElement {
         let summaries = self.summaries();
         body("state-body")
-            .child(
-                div()
-                    .font_family(MONO)
-                    .text_size(px(theme::FS_SMALL))
-                    .text_color(color(theme::MUTED))
-                    .child(format!(
-                        "{} · +{} · {why}",
-                        clock(at),
-                        duration((at - t0).max(0))
-                    )),
-            )
             .child(heading("At this moment"))
             .child(key_values(&[
                 ("turns", state.turns.to_string()),
@@ -658,7 +667,7 @@ pub(super) fn heading(title: impl Into<SharedString>) -> Div {
         .mb(px(6.))
         .child(
             div()
-                .text_size(px(theme::FS_TINY))
+                .text_size(px(theme::FS_SMALL))
                 .text_color(color(theme::DIM))
                 .child(title.into().to_uppercase()),
         )
@@ -695,7 +704,7 @@ pub(super) fn badge(tone: Tone, text: impl Into<SharedString>) -> Div {
     div()
         .flex_none()
         .font_family(MONO)
-        .text_size(px(theme::FS_TINY))
+        .text_size(px(theme::FS_SMALL))
         .border_1()
         .border_color(color(theme::LINE_2))
         .rounded(px(theme::R_TAG))
@@ -765,7 +774,7 @@ fn around_row(which: &'static str, text: String) -> gpui_kit::Stateful<Div> {
                 .flex_none()
                 .whitespace_nowrap()
                 .font_family(MONO)
-                .text_size(px(theme::FS_TINY))
+                .text_size(px(theme::FS_SMALL))
                 .child(which),
         )
         .child(div().min_w_0().truncate().italic().child(text))

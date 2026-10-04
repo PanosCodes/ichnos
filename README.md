@@ -92,14 +92,17 @@ Only one viewer runs at a time; `ichnos open` brings the running one forward.
   A subagent's work sits under the call that started it.
 - **Inspector** (right side) shows the selected row's input and output, the calls around it, and
   a **Replay from here** button. Its other tabs show what was running at that moment, the todo
-  list, files read and changed, and token use.
+  list, files read and changed, and token use; the line under the tabs says which moment they
+  describe. `⌘\` hides and shows it.
 - **Graph** shows one card per agent with its tools and timings. Click a card to see its prompt
   and result.
 - **Table** lists every event; Skill calls show the skill name as a tag.
 - **Filter** by typing words, or `is:error`, `is:running`, `tool:Bash`, `agent:Explore`,
   `file:feed.rs`.
-- **Replay** with the strip under the toolbar: click anywhere on it, or press `space` to play.
-  `▶|` goes back to live.
+- **Replay** with the strip under the toolbar: hover a tick to see what it was, click anywhere to
+  replay from there, press `space` to play or `←` / `→` to step. `▶|` goes back to live. The
+  strip's right end shows whether you're live, and toggles **Follow newest** (switch to each new
+  session) and **Auto-scroll** (keep the newest row in sight).
 - **Sessions** (`⌘K` / `Ctrl+K`) lets you search all sessions by first prompt, folder or id.
   Below those matches it lists **related** sessions: ones whose prompts, errors or summaries are
   close in meaning to what you typed, even with different words. The model (~30 MB) downloads
@@ -124,7 +127,10 @@ Only one viewer runs at a time; `ichnos open` brings the running one forward.
 | `g` / `t` / `b` | Graph / tree / table |
 | `/` | Focus the filter |
 | `space` | Play / pause replay |
+| `←` / `→` | Step replay back / forward |
 | `⌘K` | Switch session |
+| `⌘\` | Hide / show the inspector |
+| `?` | Show all shortcuts |
 
 ## Asking agents about sessions
 
