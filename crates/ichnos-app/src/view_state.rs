@@ -102,12 +102,16 @@ impl ViewState {
         }
     }
 
-    /// Start over for another session; the view and filter stay.
+    /// Start over for another session; the view, filter and panel stay.
     pub fn reset_for_session(&mut self) {
         *self = Self {
             view: self.view,
             query: std::mem::take(&mut self.query),
             show_model: self.show_model,
+            panel: PanelWidth {
+                drag: None,
+                ..self.panel
+            },
             ..Self::default()
         };
     }
@@ -468,10 +472,18 @@ pub const PANEL_RANGE: (f32, f32) = (260., 720.);
 /// The width, in pixels, the main pane keeps however wide the panel is dragged.
 pub const MAIN_MIN: f32 = 320.;
 
-/// The width of the right-hand panel, and the resize drag in progress.
+/// The width, in pixels, of the divider between the main pane and the panel.
+pub const HANDLE_WIDTH: f32 = 5.;
+
+/// The main pane width, in pixels, below which tree rows drop their timeline bar so the label
+/// keeps its room.
+pub const BARS_MIN_MAIN: f32 = 640.;
+
+/// The width of the right-hand panel, whether it shows, and the resize drag in progress.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct PanelWidth {
     width: f32,
+    open: bool,
     /// Where the pointer and the width were when the drag started.
     drag: Option<(f32, f32)>,
 }
@@ -480,6 +492,7 @@ impl Default for PanelWidth {
     fn default() -> Self {
         Self {
             width: PANEL_DEFAULT,
+            open: true,
             drag: None,
         }
     }
@@ -490,6 +503,28 @@ impl PanelWidth {
     #[must_use]
     pub fn width(&self) -> f32 {
         self.width
+    }
+
+    /// Whether the panel shows.
+    #[must_use]
+    pub fn is_open(&self) -> bool {
+        self.open
+    }
+
+    /// Show the panel if hidden, hide it if shown; its width is kept for next time.
+    pub fn toggle(&mut self) {
+        self.open = !self.open;
+        self.drag = None;
+    }
+
+    /// The main pane's width in a window `window` pixels wide.
+    #[must_use]
+    pub fn main_width(&self, window: f32) -> f32 {
+        if self.open {
+            window - self.width - HANDLE_WIDTH
+        } else {
+            window
+        }
     }
 
     /// Whether a drag is in progress.
@@ -525,6 +560,19 @@ impl PanelWidth {
     pub fn end(&mut self) {
         self.drag = None;
     }
+}
+
+/// The tick nearest to `at` within `tolerance`, as an index into `ticks`; all three are
+/// fractions of the replay strip's width.
+#[must_use]
+pub fn nearest_tick(ticks: &[f32], at: f32, tolerance: f32) -> Option<usize> {
+    ticks
+        .iter()
+        .enumerate()
+        .map(|(ix, &tick)| (ix, (tick - at).abs()))
+        .filter(|&(_, distance)| distance <= tolerance)
+        .min_by(|a, b| a.1.total_cmp(&b.1))
+        .map(|(ix, _)| ix)
 }
 
 /// Pointer travel, in pixels, beyond which a press counts as a drag rather than a click.
@@ -677,6 +725,37 @@ mod tests {
         assert_eq!(panel.width(), 800. - MAIN_MIN);
         panel.reset();
         assert_eq!(panel.width(), PANEL_DEFAULT);
+    }
+
+    #[test]
+    fn a_hidden_panel_gives_the_main_pane_the_whole_window() {
+        let mut panel = PanelWidth::default();
+        assert_eq!(
+            panel.main_width(1000.),
+            1000. - PANEL_DEFAULT - HANDLE_WIDTH
+        );
+        panel.toggle();
+        assert!(!panel.is_open());
+        assert_eq!(panel.main_width(1000.), 1000.);
+        panel.toggle();
+        assert_eq!(panel.width(), PANEL_DEFAULT);
+    }
+
+    #[test]
+    fn switching_sessions_keeps_the_panel() {
+        let mut state = ViewState::default();
+        state.panel_mut().toggle();
+        state.reset_for_session();
+        assert!(!state.panel().is_open());
+    }
+
+    #[test]
+    fn the_nearest_tick_within_reach_is_hovered() {
+        let ticks = [0.1, 0.5, 0.52, 0.9];
+        assert_eq!(nearest_tick(&ticks, 0.515, 0.02), Some(2));
+        assert_eq!(nearest_tick(&ticks, 0.11, 0.02), Some(0));
+        assert_eq!(nearest_tick(&ticks, 0.7, 0.02), None);
+        assert_eq!(nearest_tick(&[], 0.5, 1.), None);
     }
 
     const DONE: Moment = Moment {

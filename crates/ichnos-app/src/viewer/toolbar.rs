@@ -1,20 +1,20 @@
-//! The toolbar: session picker, view switch, filter, error jump, expand/collapse, Ask and the
-//! connection pill; plus the stats line and the key bar around the rows.
+//! The toolbar: session picker, view switch, model steps, filter, error jump, expand/collapse,
+//! Ask, the panel toggle and help; the stats line over the main pane; and the keyboard shortcuts
+//! overlay.
 
-use accesskit::Role;
+use accesskit::{Role, Toggled};
 use gpui_kit::component::input::{self, Input};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
-    Context, FontWeight, InteractiveElement as _, IntoElement, ParentElement as _,
+    Context, FontWeight, InteractiveElement as _, IntoElement, MouseButton, ParentElement as _,
     StatefulInteractiveElement as _, Styled as _, Window, div, px,
 };
 use ichnos_core::catalog::project_of;
 use ichnos_model::labels::{duration, tokens};
 
 use super::{Viewer, short_id};
-use crate::live::Connection;
 use crate::present::plural;
-use crate::theme::{self, MONO, color};
+use crate::theme::{self, MONO, color, color_alpha};
 use crate::view_state::{View, failed_calls};
 
 impl Viewer {
@@ -43,19 +43,8 @@ impl Viewer {
             .fold(String::new(), |extra, part| extra + " · " + part);
 
         let errors = failed_calls(&self.model).len();
-        let (pill_background, pill_color, pill_dot, pill_text) = if self.state.replay_at().is_some()
-        {
-            (theme::SEL, theme::BLUE_TEXT, theme::BLUE, "Replay")
-        } else {
-            match self.connection() {
-                Some(Connection::Live) => (theme::LIVE_BG, theme::LIVE_TEXT, theme::GREEN, "Live"),
-                Some(Connection::Retry) => (theme::SEG, theme::AMBER, theme::AMBER, "Reconnecting"),
-                Some(Connection::Connecting) => {
-                    (theme::SEG, theme::MUTED, theme::DIM, "Connecting")
-                }
-                None => (theme::SEG, theme::MUTED, theme::DIM, "No sessions"),
-            }
-        };
+        let tree = self.state.view() == View::Tree;
+        let panel_open = self.state.panel().is_open();
         let show_model = self.state.show_model();
         let has_query = !self.state.query().is_empty();
 
@@ -70,14 +59,6 @@ impl Viewer {
             .border_b_1()
             .border_color(color(theme::LINE))
             .bg(color(theme::BAR_BG))
-            .child(
-                div()
-                    .font_weight(FontWeight::SEMIBOLD)
-                    .text_size(px(theme::FS_BASE))
-                    .text_color(color(theme::BRIGHT))
-                    .mr_1()
-                    .child("Ichnos"),
-            )
             .child(
                 div()
                     .id("picker")
@@ -140,6 +121,17 @@ impl Viewer {
                             .child(view.label())
                     })),
             )
+            .when(tree, |d| {
+                d.child(
+                    toggle("model-steps", "Model steps", show_model).on_click(cx.listener(
+                        move |this, _, _, cx| {
+                            this.state.set_show_model(!show_model);
+                            this.refresh();
+                            cx.notify();
+                        },
+                    )),
+                )
+            })
             .child(
                 div()
                     .flex()
@@ -157,39 +149,6 @@ impl Viewer {
                     .on_action(cx.listener(|this, _: &input::Escape, window, cx| {
                         this.focus.focus(window, cx);
                     }))
-                    .child(
-                        div()
-                            .id("model-chip")
-                            .role(Role::Button)
-                            .aria_label("Toggle model steps")
-                            .flex_none()
-                            .px_1p5()
-                            .rounded(px(theme::R_TAG))
-                            .font_family(MONO)
-                            .text_size(px(theme::FS_TINY))
-                            .whitespace_nowrap()
-                            .cursor_pointer()
-                            .when_else(
-                                show_model,
-                                |d| {
-                                    d.bg(color(theme::SEL))
-                                        .text_color(color(0x00c3_d4f0))
-                                        .child("+model steps ×")
-                                },
-                                |d| {
-                                    d.border_1()
-                                        .border_dashed()
-                                        .border_color(color(theme::LINE_2))
-                                        .text_color(color(theme::DIM))
-                                        .child("+ model steps")
-                                },
-                            )
-                            .on_click(cx.listener(move |this, _, _, cx| {
-                                this.state.set_show_model(!show_model);
-                                this.refresh();
-                                cx.notify();
-                            })),
-                    )
                     .child(
                         div().flex_1().min_w_0().child(
                             Input::new(&self.filter_input)
@@ -212,85 +171,77 @@ impl Viewer {
                         kbd("/").into_any_element()
                     }),
             )
-            .child(
-                div()
-                    .id("errors")
-                    .role(Role::Button)
-                    .aria_label("Next error")
-                    .flex()
-                    .flex_none()
-                    .items_center()
-                    .h(px(theme::CONTROL_HEIGHT))
-                    .px(px(10.))
-                    .border_1()
-                    .rounded(px(theme::R_CONTROL))
-                    .whitespace_nowrap()
-                    .cursor_pointer()
-                    .when_else(
-                        errors > 0,
-                        |d| {
-                            d.border_color(color(theme::RED_LINE))
-                                .text_color(color(theme::RED_TEXT))
-                        },
-                        |d| {
-                            d.border_color(color(theme::LINE_2))
-                                .text_color(color(theme::DIM))
-                        },
-                    )
-                    .on_click(cx.listener(|this, _, window, cx| {
-                        this.on_next_error(&super::NextError, window, cx);
-                    }))
-                    .child(if errors > 0 {
-                        format!("{} · next ↓", plural(errors, "error"))
-                    } else {
-                        "no errors".to_owned()
-                    }),
-            )
-            .child(
-                div()
-                    .flex()
-                    .flex_row()
-                    .flex_none()
-                    .border_1()
-                    .border_color(color(theme::LINE_2))
-                    .rounded(px(theme::R_CONTROL))
-                    .text_color(color(theme::BTN))
-                    .text_size(px(theme::FS_SMALL))
-                    .child(
-                        div()
-                            .id("expand")
-                            .role(Role::Button)
-                            .aria_label("Expand all")
-                            .px_2()
-                            .py_1()
-                            .cursor_pointer()
-                            .hover(|s| s.text_color(color(theme::BRIGHT)))
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                this.state.set_all_open(&this.model, true);
-                                this.refresh();
-                                cx.notify();
-                            }))
-                            .child("Expand"),
-                    )
-                    .child(
-                        div()
-                            .id("collapse")
-                            .role(Role::Button)
-                            .aria_label("Collapse all")
-                            .px_2()
-                            .py_1()
-                            .border_l_1()
-                            .border_color(color(theme::LINE_2))
-                            .cursor_pointer()
-                            .hover(|s| s.text_color(color(theme::BRIGHT)))
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                this.state.set_all_open(&this.model, false);
-                                this.refresh();
-                                cx.notify();
-                            }))
-                            .child("Collapse"),
-                    ),
-            )
+            .when(errors > 0, |d| {
+                d.child(
+                    div()
+                        .id("errors")
+                        .role(Role::Button)
+                        .aria_label(format!("{}: jump to the next", plural(errors, "error")))
+                        .flex()
+                        .flex_none()
+                        .items_center()
+                        .h(px(theme::CONTROL_HEIGHT))
+                        .px(px(10.))
+                        .border_1()
+                        .rounded(px(theme::R_CONTROL))
+                        .whitespace_nowrap()
+                        .cursor_pointer()
+                        .border_color(color(theme::RED_LINE))
+                        .text_color(color(theme::RED_TEXT))
+                        .hover(|s| s.bg(color(theme::RED_BG)))
+                        .on_click(cx.listener(|this, _, window, cx| {
+                            this.on_next_error(&super::NextError, window, cx);
+                        }))
+                        .child(format!("{} · next ↓", plural(errors, "error"))),
+                )
+            })
+            .when(tree, |d| {
+                d.child(
+                    div()
+                        .flex()
+                        .flex_row()
+                        .flex_none()
+                        .border_1()
+                        .border_color(color(theme::LINE_2))
+                        .rounded(px(theme::R_CONTROL))
+                        .text_color(color(theme::BTN))
+                        .text_size(px(theme::FS_SMALL))
+                        .child(
+                            div()
+                                .id("expand")
+                                .role(Role::Button)
+                                .aria_label("Expand all")
+                                .px_2()
+                                .py_1()
+                                .cursor_pointer()
+                                .hover(|s| s.text_color(color(theme::BRIGHT)))
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    this.state.set_all_open(&this.model, true);
+                                    this.refresh();
+                                    cx.notify();
+                                }))
+                                .child("Expand"),
+                        )
+                        .child(
+                            div()
+                                .id("collapse")
+                                .role(Role::Button)
+                                .aria_label("Collapse all")
+                                .px_2()
+                                .py_1()
+                                .border_l_1()
+                                .border_color(color(theme::LINE_2))
+                                .cursor_pointer()
+                                .hover(|s| s.text_color(color(theme::BRIGHT)))
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    this.state.set_all_open(&this.model, false);
+                                    this.refresh();
+                                    cx.notify();
+                                }))
+                                .child("Collapse"),
+                        ),
+                )
+            })
             .child(
                 div()
                     .id("ask")
@@ -320,21 +271,22 @@ impl Viewer {
                     .child("Ask agent"),
             )
             .child(
-                div()
-                    .flex()
-                    .flex_row()
-                    .flex_none()
-                    .items_center()
-                    .gap_1p5()
-                    .h(px(theme::CONTROL_HEIGHT))
-                    .px(px(10.))
-                    .rounded(px(14.))
-                    .font_weight(FontWeight::MEDIUM)
-                    .whitespace_nowrap()
-                    .bg(color(pill_background))
-                    .text_color(color(pill_color))
-                    .child(div().size(px(6.)).rounded(px(3.)).bg(color(pill_dot)))
-                    .child(pill_text),
+                icon_button(
+                    "panel-toggle",
+                    if panel_open {
+                        "Hide inspector"
+                    } else {
+                        "Show inspector"
+                    },
+                    panel_icon(panel_open),
+                )
+                .aria_keyshortcuts("Meta+\\")
+                .on_click(cx.listener(|this, _, _, cx| this.toggle_panel(cx))),
+            )
+            .child(
+                icon_button("help", "Keyboard shortcuts", "?")
+                    .aria_keyshortcuts("?")
+                    .on_click(cx.listener(|this, _, _, cx| this.toggle_help(cx))),
             )
     }
 
@@ -398,102 +350,226 @@ impl Viewer {
         )))
     }
 
-    pub(super) fn render_keybar(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let hint = |key: &'static str, what: &'static str| {
+    /// The keyboard shortcuts overlay; a click outside the card or Esc closes it.
+    pub(super) fn render_help(cx: &mut Context<Self>) -> impl IntoElement {
+        let group = |title: &'static str, keys: &[(&'static str, &'static str)]| {
             div()
                 .flex()
-                .flex_row()
+                .flex_col()
                 .gap_1()
                 .child(
                     div()
-                        .font_family(MONO)
-                        .font_weight(FontWeight::MEDIUM)
-                        .text_color(color(theme::BTN))
-                        .child(key),
+                        .text_size(px(theme::FS_SMALL))
+                        .font_weight(FontWeight::SEMIBOLD)
+                        .text_color(color(theme::MUTED))
+                        .child(title),
                 )
-                .child(what)
+                .children(keys.iter().map(|&(key, what)| {
+                    div()
+                        .flex()
+                        .flex_row()
+                        .items_center()
+                        .gap_3()
+                        .child(
+                            div()
+                                .w(px(72.))
+                                .flex_none()
+                                .font_family(MONO)
+                                .font_weight(FontWeight::MEDIUM)
+                                .text_color(color(theme::BTN))
+                                .child(key),
+                        )
+                        .child(what)
+                }))
         };
-        let follow = self.follow_newest;
-        let tail = self.state.tail();
         div()
+            .id("help-backdrop")
+            .absolute()
+            .inset_0()
             .flex()
-            .flex_row()
-            .flex_none()
             .items_center()
-            .gap_4()
-            .h(px(28.))
-            .px(px(14.))
-            .border_t_1()
-            .border_color(color(theme::LINE))
-            .text_color(color(theme::DIM))
-            .text_size(px(theme::FS_SMALL))
-            .whitespace_nowrap()
-            .overflow_hidden()
-            .child(hint("j k", "move"))
-            .child(hint("↵", "expand"))
-            .child(hint("e", "next error"))
-            .child(hint("space", "play"))
-            .child(hint("g", "graph"))
-            .child(hint("/", "filter"))
+            .justify_center()
+            .bg(color_alpha(0x0000_0080))
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|this, _, _, cx| {
+                    this.help = false;
+                    cx.notify();
+                }),
+            )
             .child(
                 div()
-                    .ml_auto()
+                    .id("help")
+                    .role(Role::Dialog)
+                    .aria_label("Keyboard shortcuts")
                     .flex()
-                    .flex_row()
-                    .gap_1()
+                    .flex_col()
+                    .gap_4()
+                    .w(px(520.))
+                    .p_5()
+                    .bg(color(theme::CARD))
+                    .border_1()
+                    .border_color(color(theme::LINE_2))
+                    .rounded(px(theme::R_POPUP))
+                    .shadow_lg()
+                    .text_color(color(theme::FG))
+                    .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                     .child(
                         div()
-                            .id("follow")
-                            .role(Role::Button)
-                            .aria_label("Follow newest session")
-                            .cursor_pointer()
-                            .when_else(
-                                follow,
-                                |d| d.text_color(color(theme::BLUE_TEXT)),
-                                |d| d.hover(|s| s.text_color(color(theme::FG))),
+                            .flex()
+                            .flex_row()
+                            .items_center()
+                            .child(
+                                div()
+                                    .font_weight(FontWeight::SEMIBOLD)
+                                    .text_size(px(theme::FS_TITLE))
+                                    .text_color(color(theme::BRIGHT))
+                                    .child("Keyboard shortcuts"),
                             )
-                            .on_click(cx.listener(move |this, _, _, cx| {
-                                if follow {
-                                    this.follow_newest = false;
-                                    cx.notify();
-                                } else {
-                                    this.open_session(None, None, cx);
-                                }
-                            }))
-                            .child(if follow {
-                                "following newest"
-                            } else {
-                                "pinned to this session"
-                            }),
+                            .child(
+                                icon_button("help-close", "Close keyboard shortcuts", "×")
+                                    .ml_auto()
+                                    .on_click(cx.listener(|this, _, _, cx| this.toggle_help(cx))),
+                            ),
                     )
-                    .child("·")
                     .child(
                         div()
-                            .id("tail")
-                            .role(Role::Button)
-                            .aria_label("Auto-scroll to newest")
-                            .cursor_pointer()
-                            .when_else(
-                                tail,
-                                |d| d.text_color(color(theme::BLUE_TEXT)),
-                                |d| d.hover(|s| s.text_color(color(theme::FG))),
+                            .flex()
+                            .flex_row()
+                            .gap_6()
+                            .child(
+                                div()
+                                    .flex()
+                                    .flex_col()
+                                    .flex_1()
+                                    .gap_4()
+                                    .child(group(
+                                        "Rows",
+                                        &[
+                                            ("j k ↓ ↑", "Move"),
+                                            ("↵", "Expand or collapse"),
+                                            ("e", "Next error"),
+                                            ("/", "Filter"),
+                                        ],
+                                    ))
+                                    .child(group(
+                                        "Replay",
+                                        &[("space", "Play or pause"), ("← →", "Step")],
+                                    )),
                             )
-                            .on_click(cx.listener(move |this, _, _, cx| {
-                                this.state.set_tail(!tail);
-                                if !tail {
-                                    this.tree_scroll.scroll_to_bottom();
-                                    this.table_scroll.scroll_to_bottom();
-                                }
-                                cx.notify();
-                            }))
-                            .child(if tail {
-                                "auto-scroll on"
-                            } else {
-                                "auto-scroll off"
-                            }),
+                            .child(
+                                div()
+                                    .flex()
+                                    .flex_col()
+                                    .flex_1()
+                                    .gap_4()
+                                    .child(group(
+                                        "Views",
+                                        &[
+                                            ("t g b", "Tree, graph, table"),
+                                            ("⌘K", "Switch session"),
+                                            ("⌘\\", "Show or hide inspector"),
+                                        ],
+                                    ))
+                                    .child(group(
+                                        "Graph",
+                                        &[("⌘= ⌘-", "Zoom in, out"), ("⌘0", "Actual size")],
+                                    ))
+                                    .child(group("", &[("?", "This list"), ("esc", "Close")])),
+                            ),
                     ),
             )
     }
+}
+
+/// A toolbar toggle whose text stays put and whose state shows by fill and to assistive tech.
+pub(super) fn toggle(
+    id: &'static str,
+    label: &'static str,
+    on: bool,
+) -> gpui_kit::Stateful<gpui_kit::Div> {
+    div()
+        .id(id)
+        .role(Role::Button)
+        .aria_label(label)
+        .aria_toggled(if on { Toggled::True } else { Toggled::False })
+        .flex()
+        .flex_none()
+        .items_center()
+        .gap_1p5()
+        .h(px(theme::CONTROL_HEIGHT))
+        .px(px(9.))
+        .border_1()
+        .rounded(px(theme::R_CONTROL))
+        .whitespace_nowrap()
+        .text_size(px(theme::FS_SMALL))
+        .cursor_pointer()
+        .when_else(
+            on,
+            |d| {
+                d.bg(color(theme::SEL))
+                    .border_color(color(theme::BLUE_LINE))
+                    .text_color(color(theme::BLUE_TEXT))
+            },
+            |d| {
+                d.border_color(color(theme::LINE_2))
+                    .text_color(color(theme::MUTED))
+                    .hover(|s| s.text_color(color(theme::FG)))
+            },
+        )
+        .child(if on { "✓" } else { "○" })
+        .child(label)
+}
+
+/// A square toolbar button showing `glyph`, named `label` for assistive tech.
+pub(super) fn icon_button(
+    id: &'static str,
+    label: &'static str,
+    glyph: impl IntoElement,
+) -> gpui_kit::Stateful<gpui_kit::Div> {
+    div()
+        .id(id)
+        .group(id)
+        .role(Role::Button)
+        .aria_label(label)
+        .flex()
+        .flex_none()
+        .items_center()
+        .justify_center()
+        .size(px(theme::CONTROL_HEIGHT))
+        .border_1()
+        .border_color(color(theme::LINE_2))
+        .rounded(px(theme::R_CONTROL))
+        .text_color(color(theme::MUTED))
+        .cursor_pointer()
+        .hover(|s| {
+            s.text_color(color(theme::BRIGHT))
+                .border_color(color(theme::HOVER_LINE))
+        })
+        .child(glyph)
+}
+
+/// A window with its right-hand panel filled, drawn rather than set as `◨`: that glyph comes
+/// from a fallback font and sits off-centre in the button. It lights up with its button.
+fn panel_icon(open: bool) -> gpui_kit::Div {
+    let ink = if open { theme::BRIGHT } else { theme::MUTED };
+    div()
+        .flex()
+        .flex_row()
+        .justify_end()
+        .w(px(14.))
+        .h(px(12.))
+        .border_1()
+        .rounded(px(2.))
+        .border_color(color(ink))
+        .group_hover("panel-toggle", |s| s.border_color(color(theme::BRIGHT)))
+        .child(
+            div()
+                .w(px(5.))
+                .h_full()
+                .bg(color(ink))
+                .group_hover("panel-toggle", |s| s.bg(color(theme::BRIGHT))),
+        )
 }
 
 /// A small key hint box.
@@ -501,7 +577,7 @@ pub(super) fn kbd(text: &'static str) -> gpui_kit::Div {
     div()
         .flex_none()
         .font_family(MONO)
-        .text_size(px(theme::FS_TINY))
+        .text_size(px(theme::FS_SMALL))
         .text_color(color(theme::DIM))
         .border_1()
         .border_color(color(theme::LINE_2))

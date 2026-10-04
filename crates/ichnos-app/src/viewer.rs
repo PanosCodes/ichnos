@@ -19,6 +19,7 @@ use std::time::{Duration, Instant};
 
 use gpui_kit::TestSupportExt as _;
 use gpui_kit::component::input::{InputEvent, InputState};
+use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
     AnyElement, App, AppContext as _, ClipboardItem, Context, Entity, FocusHandle, Focusable,
     InteractiveElement as _, IntoElement, KeyBinding, MouseButton, MouseDownEvent, MouseMoveEvent,
@@ -74,6 +75,14 @@ actions!(
         NextError,
         /// Start or pause replay.
         TogglePlay,
+        /// Move the replay cursor back one moment.
+        StepBack,
+        /// Move the replay cursor forward one moment.
+        StepForward,
+        /// Show or hide the right-hand panel.
+        TogglePanel,
+        /// Open or close the keyboard shortcuts overlay.
+        ToggleHelp,
         /// Show the tree.
         ShowTree,
         /// Show the graph.
@@ -107,6 +116,11 @@ pub fn bind_keys(cx: &mut App) {
         KeyBinding::new("enter", ToggleRow, Some(SHORTCUTS)),
         KeyBinding::new("e", NextError, Some(SHORTCUTS)),
         KeyBinding::new("space", TogglePlay, Some(SHORTCUTS)),
+        KeyBinding::new("left", StepBack, Some(SHORTCUTS)),
+        KeyBinding::new("right", StepForward, Some(SHORTCUTS)),
+        KeyBinding::new("cmd-\\", TogglePanel, Some(CONTEXT)),
+        KeyBinding::new("?", ToggleHelp, Some(SHORTCUTS)),
+        KeyBinding::new("shift-/", ToggleHelp, Some(SHORTCUTS)),
         KeyBinding::new("t", ShowTree, Some(SHORTCUTS)),
         KeyBinding::new("g", ShowGraph, Some(SHORTCUTS)),
         KeyBinding::new("b", ShowTable, Some(SHORTCUTS)),
@@ -177,10 +191,15 @@ pub struct Viewer {
     /// The copy button that shows "copied", and since when.
     copied: Option<(SharedString, Instant)>,
     tool_sort: ToolSort,
+    /// The pointer over the replay strip, as a fraction of its width, and the fraction a tick
+    /// may be from it and still count as hovered.
+    replay_hover: Option<(f32, f32)>,
     switcher: Option<Entity<Switcher>>,
     ask: Option<Entity<AskPanel>>,
     /// Whether the Ask panel focuses on the selected row.
     ask_focus: bool,
+    /// Whether the keyboard shortcuts overlay is open.
+    help: bool,
     subscriptions: Vec<Subscription>,
 }
 
@@ -192,11 +211,12 @@ impl Viewer {
             .flex_none()
             .max_w(px(140.))
             .px(px(5.))
-            .py(px(2.))
+            .py(px(1.))
+            .line_height(px(14.))
             .border_1()
             .border_color(color(theme::PURPLE_LINE))
             .rounded(px(theme::R_TAG))
-            .text_size(px(theme::FS_TINY))
+            .text_size(px(theme::FS_SMALL))
             .text_color(color(theme::PURPLE_TEXT))
             .truncate()
             .whitespace_nowrap()
@@ -238,9 +258,11 @@ impl Viewer {
             polls: 0,
             copied: None,
             tool_sort: ToolSort::Time,
+            replay_hover: None,
             switcher: None,
             ask: None,
             ask_focus: false,
+            help: false,
             subscriptions,
         };
         if let Some(session) = options.session {
@@ -584,6 +606,16 @@ impl Viewer {
         cx.notify();
     }
 
+    fn toggle_panel(&mut self, cx: &mut Context<Self>) {
+        self.state.panel_mut().toggle();
+        cx.notify();
+    }
+
+    fn toggle_help(&mut self, cx: &mut Context<Self>) {
+        self.help = !self.help;
+        cx.notify();
+    }
+
     fn toggle_play(&mut self, cx: &mut Context<Self>) {
         self.state.toggle_play(self.bounds);
         self.refresh();
@@ -674,6 +706,7 @@ impl Viewer {
     fn on_dismiss(&mut self, _: &Dismiss, window: &mut Window, cx: &mut Context<Self>) {
         self.switcher = None;
         self.ask = None;
+        self.help = false;
         self.focus.focus(window, cx);
         cx.notify();
     }
@@ -717,7 +750,7 @@ impl Viewer {
         div()
             .id("panel-handle")
             .flex_none()
-            .w(px(5.))
+            .w(px(crate::view_state::HANDLE_WIDTH))
             .border_l_1()
             .border_color(color(theme::LINE))
             .cursor_col_resize()
@@ -758,36 +791,33 @@ impl Render for Viewer {
         };
         window.set_window_title(&title);
 
-        let main = match self.state.view() {
-            View::Graph => div()
-                .flex()
-                .flex_row()
-                .flex_1()
-                .min_h_0()
-                .child(self.render_graph(cx))
-                .child(Self::render_panel_handle(cx))
-                .child(self.render_agent_inspector(cx)),
-            View::Tree | View::Table => div()
-                .flex()
-                .flex_row()
-                .flex_1()
-                .min_h_0()
-                .child(
-                    div()
-                        .flex()
-                        .flex_col()
-                        .flex_1()
-                        .min_w_0()
-                        .child(self.render_stats())
-                        .child(match self.state.view() {
-                            View::Table => self.render_table(cx).into_any_element(),
-                            _ => self.render_tree(cx).into_any_element(),
-                        })
-                        .child(self.render_keybar(cx)),
-                )
-                .child(Self::render_panel_handle(cx))
-                .child(self.render_inspector(window, cx)),
+        let view = self.state.view();
+        let content = match view {
+            View::Graph => self.render_graph(cx),
+            View::Table => self.render_table(cx),
+            View::Tree => self.render_tree(cx),
         };
+        let panel = self.state.panel().is_open().then(|| match view {
+            View::Graph => self.render_agent_inspector(cx),
+            View::Tree | View::Table => self.render_inspector(window, cx).into_any_element(),
+        });
+        let main = div()
+            .flex()
+            .flex_row()
+            .flex_1()
+            .min_h_0()
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .flex_1()
+                    .min_w_0()
+                    .child(self.render_stats())
+                    .child(content),
+            )
+            .when_some(panel, |d, panel| {
+                d.child(Self::render_panel_handle(cx)).child(panel)
+            });
 
         div()
             .key_context(CONTEXT)
@@ -797,6 +827,10 @@ impl Render for Viewer {
             .on_action(cx.listener(Self::on_toggle_row))
             .on_action(cx.listener(Self::on_next_error))
             .on_action(cx.listener(|this, _: &TogglePlay, _, cx| this.toggle_play(cx)))
+            .on_action(cx.listener(|this, _: &StepBack, _, cx| this.step(false, cx)))
+            .on_action(cx.listener(|this, _: &StepForward, _, cx| this.step(true, cx)))
+            .on_action(cx.listener(|this, _: &TogglePanel, _, cx| this.toggle_panel(cx)))
+            .on_action(cx.listener(|this, _: &ToggleHelp, _, cx| this.toggle_help(cx)))
             .on_action(cx.listener(|this, _: &ShowTree, _, cx| this.set_view(View::Tree, cx)))
             .on_action(cx.listener(|this, _: &ShowGraph, _, cx| this.set_view(View::Graph, cx)))
             .on_action(cx.listener(|this, _: &ShowTable, _, cx| this.set_view(View::Table, cx)))
@@ -846,6 +880,7 @@ impl Render for Viewer {
             .child(self.render_replay(cx))
             .child(main)
             .children(self.ask.clone().map(|ask| self.render_ask(&ask, cx)))
+            .when(self.help, |d| d.child(Self::render_help(cx)))
             .children(self.switcher.clone())
     }
 }

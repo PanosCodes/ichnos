@@ -311,7 +311,7 @@ impl Render for Switcher {
                             .border_t_1()
                             .border_color(color(theme::LINE))
                             .font_family(MONO)
-                            .text_size(px(theme::FS_TINY))
+                            .text_size(px(theme::FS_SMALL))
                             .text_color(color(theme::DIM))
                             .child("↑↓ choose")
                             .child("↵ open")
@@ -390,7 +390,7 @@ fn session_row(
                     .flex_row()
                     .gap(px(10.))
                     .mt(px(3.))
-                    .text_size(px(theme::FS_TINY))
+                    .text_size(px(theme::FS_SMALL))
                     .child(
                         div()
                             .flex_none()
@@ -414,7 +414,7 @@ fn session_row(
                     .gap(px(10.))
                     .mt(px(3.))
                     .font_family(MONO)
-                    .text_size(px(theme::FS_TINY))
+                    .text_size(px(theme::FS_SMALL))
                     .text_color(color(theme::MUTED))
                     .when(entry.is_recent(now_ms), |d| {
                         d.child(div().text_color(color(theme::LIVE_TEXT)).child("live"))
