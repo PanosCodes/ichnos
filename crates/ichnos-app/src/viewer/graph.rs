@@ -817,12 +817,12 @@ impl Viewer {
                     .child(heading("Prompt"))
                     .child(super::inspector::block(
                         crate::present::SectionTone::Prose,
-                        prompt,
+                        &prompt,
                     ))
                     .child(heading("Returned"))
                     .child(super::inspector::block(
                         crate::present::SectionTone::Prose,
-                        returned,
+                        &returned,
                     ))
                     .child(div().mt_4().child(key_values(&[
                         ("wall", facts.dur.map_or_else(|| "—".to_owned(), duration)),

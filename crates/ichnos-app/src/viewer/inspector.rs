@@ -1,11 +1,14 @@
 //! The inspector: the selected row's Call tab, and the State, Files and Tokens tabs.
 
+use std::hash::{DefaultHasher, Hash as _, Hasher as _};
+
 use accesskit::Role;
+use gpui_kit::component::text::{TextView, TextViewStyle};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
     AnyElement, Context, Div, ElementId, FontWeight, InteractiveElement as _, IntoElement,
-    ParentElement as _, SharedString, StatefulInteractiveElement as _, Styled as _, Window, div,
-    px, relative,
+    ParentElement as _, SharedString, StatefulInteractiveElement as _, StyleRefinement,
+    Styled as _, Window, div, px, relative,
 };
 use ichnos_model::call::Key;
 use ichnos_model::labels::{clock, duration, label, tokens};
@@ -311,7 +314,7 @@ impl Viewer {
                                                     ),
                                             ),
                                     )
-                                    .child(block(section.tone, section.body))
+                                    .child(block(section.tone, &section.body))
                             }),
                     )
                     .when(prev.is_some() || next.is_some(), |d| {
@@ -673,8 +676,30 @@ pub(super) fn heading(title: impl Into<SharedString>) -> Div {
         )
 }
 
-/// A prose or code block.
-pub(super) fn block(tone: SectionTone, text: String) -> Div {
+/// A prose or code block whose text can be selected with the mouse.
+///
+/// The text is shown as a fenced code block, so Markdown in it is left alone.
+pub(super) fn block(tone: SectionTone, text: &str) -> Div {
+    let mut hasher = DefaultHasher::new();
+    text.hash(&mut hasher);
+    let id = SharedString::from(format!("block-{:x}", hasher.finish()));
+    let longest_run = text
+        .split(|c| c != '`')
+        .map(str::len)
+        .max()
+        .unwrap_or_default();
+    let fence = "`".repeat(longest_run.max(2) + 1);
+    let body = TextView::markdown(id, format!("{fence}\n{text}\n{fence}"))
+        .selectable(true)
+        .style(
+            TextViewStyle::default().code_block(
+                StyleRefinement::default()
+                    .bg(gpui_kit::transparent_black())
+                    .p_0()
+                    .font_family(MONO)
+                    .text_size(px(theme::FS_SMALL)),
+            ),
+        );
     let block = div()
         .px(px(10.))
         .py_2()
@@ -683,20 +708,14 @@ pub(super) fn block(tone: SectionTone, text: String) -> Div {
         .bg(color(theme::FIELD))
         .border_color(color(theme::LINE));
     match tone {
-        SectionTone::Prose => block.child(text),
-        SectionTone::Code => block
-            .font_family(MONO)
-            .text_size(px(theme::FS_SMALL))
-            .text_color(color(theme::TEXT_2))
-            .child(text),
+        SectionTone::Prose => block.text_color(color(theme::FG)),
+        SectionTone::Code => block.text_color(color(theme::TEXT_2)),
         SectionTone::Err => block
-            .font_family(MONO)
-            .text_size(px(theme::FS_SMALL))
             .bg(color(theme::RED_BG))
             .border_color(color(theme::RED_LINE))
-            .text_color(color(theme::RED_SOFT))
-            .child(text),
+            .text_color(color(theme::RED_SOFT)),
     }
+    .child(body)
 }
 
 /// A mono badge in `tone`.
