@@ -227,6 +227,22 @@ fn last_message(call: Option<&Call>) -> String {
 #[must_use]
 pub fn label(node: &Node, summaries: &Summaries, model: &SessionModel) -> Label {
     match node.kind() {
+        NodeKind::Event(call) if call.name() == ichnos_core::debug::DEBUG_EVENT => {
+            let account = call.extra("debug").cloned().unwrap_or_default();
+            Label::new(
+                "debug",
+                ChipClass::Plain,
+                ichnos_core::debug::summary(&account),
+                false,
+            )
+        }
+        _ => node_label(node, summaries, model),
+    }
+}
+
+/// How any node but a model's account reads in a row.
+fn node_label(node: &Node, summaries: &Summaries, model: &SessionModel) -> Label {
+    match node.kind() {
         NodeKind::Turn { prompt: None, .. } => {
             let mut label = Label::new("session", ChipClass::Turn, "Before the first prompt", true);
             label.sub = Some(totals_line(node.totals()));
