@@ -335,21 +335,99 @@ fn the_arrow_keys_step_the_replay_cursor(cx: &mut TestAppContext) {
 }
 
 #[gpui_kit::test]
-fn every_view_keeps_the_follow_toggle(cx: &mut TestAppContext) {
+fn the_settings_shortcut_opens_one_window(cx: &mut TestAppContext) {
+    let dir = tempfile::tempdir().unwrap();
+    let (viewer, mut visual) = open(cx, dir.path());
+    press(&mut visual, "cmd-,");
+    assert!(cx.read(|cx| viewer.read(cx).settings.is_some()));
+    let windows = cx.update(|cx| cx.windows().len());
+    press(&mut visual, "cmd-,");
+    assert_eq!(cx.update(|cx| cx.windows().len()), windows);
+}
+
+#[gpui_kit::test]
+fn the_settings_window_opens_again_after_it_is_closed(cx: &mut TestAppContext) {
+    let dir = tempfile::tempdir().unwrap();
+    let (viewer, mut visual) = open(cx, dir.path());
+    let windows = cx.update(|cx| cx.windows().len());
+    press(&mut visual, "cmd-,");
+    assert_eq!(cx.update(|cx| cx.windows().len()), windows + 1);
+    let settings = cx.read(|cx| viewer.read(cx).settings).unwrap();
+    cx.update(|cx| {
+        settings
+            .update(cx, |_, window, _| window.remove_window())
+            .unwrap();
+    });
+    assert_eq!(cx.update(|cx| cx.windows().len()), windows);
+    press(&mut visual, "cmd-,");
+    assert_eq!(cx.update(|cx| cx.windows().len()), windows + 1);
+}
+
+#[gpui_kit::test]
+fn the_settings_switch_changes_what_the_viewer_follows(cx: &mut TestAppContext) {
     use gpui_kit::test::TestWindowExt as _;
 
     let dir = tempfile::tempdir().unwrap();
-    let (_viewer, mut visual) = open(cx, dir.path());
-    for key in ["t", "g", "b"] {
-        press(&mut visual, key);
-        visual.update(|window, cx| {
+    let (viewer, _visual) = open(cx, dir.path());
+    let (_settings, settings) =
+        cx.add_window_view(|window, cx| crate::settings::Settings::new(viewer.clone(), window, cx));
+    let follows = |settings: &mut VisualTestContext| {
+        settings.update(|_, cx| viewer.read(cx).follows_newest())
+    };
+    assert!(!follows(settings));
+    for expected in [true, false] {
+        settings.update(|window, cx| {
             window.render_frame(cx);
-            assert!(
-                f32::from(window.find("follow").bounds().size.width) > 0.,
-                "the follow toggle is missing after {key}"
-            );
+            window.click("follow", cx);
         });
+        settle(settings);
+        assert_eq!(follows(settings), expected);
     }
+}
+
+#[gpui_kit::test]
+fn the_settings_tabs_switch_panes_by_click_and_keyboard(cx: &mut TestAppContext) {
+    use gpui_kit::test::TestWindowExt as _;
+
+    let dir = tempfile::tempdir().unwrap();
+    let (viewer, _visual) = open(cx, dir.path());
+    let (_settings, settings) =
+        cx.add_window_view(|window, cx| crate::settings::Settings::new(viewer.clone(), window, cx));
+    settings.update(|window, cx| {
+        window.render_frame(cx);
+        window.click("About", cx);
+    });
+    settle(settings);
+    settings.update(|window, cx| {
+        window.render_frame(cx);
+        assert!(
+            window.try_find("follow").is_none(),
+            "About shows no follow checkbox"
+        );
+    });
+    press(settings, "cmd-1");
+    settings.update(|window, cx| {
+        window.render_frame(cx);
+        assert!(f32::from(window.find("follow").bounds().size.width) > 0.);
+    });
+}
+
+#[gpui_kit::test]
+fn the_settings_window_switches_following(cx: &mut TestAppContext) {
+    use gpui_kit::test::TestWindowExt as _;
+
+    let dir = tempfile::tempdir().unwrap();
+    let (viewer, _visual) = open(cx, dir.path());
+    // The viewer was opened on a session, so it is pinned.
+    assert!(!cx.read(|cx| viewer.read(cx).follows_newest()));
+    let (_settings, settings) =
+        cx.add_window_view(|window, cx| crate::settings::Settings::new(viewer.clone(), window, cx));
+    settings.update(|window, cx| {
+        window.render_frame(cx);
+        assert!(f32::from(window.find("follow").bounds().size.width) > 0.);
+    });
+    viewer.update(cx, |viewer, cx| viewer.set_follow_newest(true, cx));
+    assert!(cx.read(|cx| viewer.read(cx).follows_newest()));
 }
 
 /// What the clipboard holds as text.

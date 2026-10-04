@@ -1,12 +1,11 @@
 //! The replay strip: every call and model step as a tick on one rail, with turn markers and the
 //! replay cursor; click to replay from there, hover a tick to see what it was. Its right end holds
-//! the live status: the connection pill and the follow and auto-scroll toggles.
+//! the live status: the connection pill and the auto-scroll toggle.
 
 use accesskit::Role;
 use std::cell::Cell;
 use std::rc::Rc;
 
-use gpui_kit::TestSupportExt as _;
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
     Bounds, Context, FontWeight, Hsla, InteractiveElement as _, IntoElement, MouseButton,
@@ -334,7 +333,7 @@ impl Viewer {
             .child(self.render_live(f32::from(window.viewport_size().width) < WIDE, cx))
     }
 
-    /// The connection pill and the follow and auto-scroll toggles.
+    /// The connection pill and the auto-scroll toggle.
     fn render_live(&self, narrow: bool, cx: &mut Context<Self>) -> impl IntoElement {
         let (pill_background, pill_color, pill_dot, pill_text) = if self.state.replay_at().is_some()
         {
@@ -349,7 +348,6 @@ impl Viewer {
                 None => (theme::SEG, theme::MUTED, theme::DIM, "No sessions"),
             }
         };
-        let follow = self.follow_newest;
         let tail = self.state.tail();
         div()
             .flex()
@@ -373,23 +371,6 @@ impl Viewer {
                     .text_color(color(pill_color))
                     .child(div().size(px(6.)).rounded(px(3.)).bg(color(pill_dot)))
                     .child(pill_text),
-            )
-            .child(
-                toggle(
-                    "follow",
-                    "Follow newest",
-                    if narrow { "Follow" } else { "Follow newest" },
-                    follow,
-                )
-                .on_click(cx.listener(move |this, _, _, cx| {
-                    if follow {
-                        this.follow_newest = false;
-                        cx.notify();
-                    } else {
-                        this.open_session(None, None, cx);
-                    }
-                }))
-                .test_support(),
             )
             .when(self.state.view() != View::Graph, |d| {
                 d.child(

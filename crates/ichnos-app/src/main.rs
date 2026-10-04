@@ -13,6 +13,7 @@
 mod live;
 mod llm;
 mod present;
+mod settings;
 #[cfg(feature = "screenshots")]
 mod shots;
 mod summarizer;
@@ -144,30 +145,33 @@ fn main() -> ExitCode {
         listener,
     };
 
-    gpui_kit::application().run(move |cx| {
-        gpui_kit::init(cx);
-        theme::apply_appearance(cx.window_appearance(), cx);
-        viewer::bind_keys(cx);
-        let bounds = Bounds::centered(None, size(px(1400.), px(900.)), cx);
-        let window = gpui_kit::open_window(
-            WindowOptions {
-                window_bounds: Some(WindowBounds::Windowed(bounds)),
-                titlebar: Some(TitlebarOptions {
-                    title: Some("Ichnos".into()),
-                    ..TitlebarOptions::default()
-                }),
-                ..WindowOptions::default()
-            },
-            cx,
-            |window, cx| cx.new(|cx| Viewer::new(options, window, cx)),
-        );
-        match window {
-            Ok(_) => cx.activate(true),
-            Err(err) => {
-                eprintln!("could not open the window: {err}");
-                cx.quit();
+    gpui_kit::application()
+        .with_assets(gpui_kit::assets::Assets)
+        .run(move |cx| {
+            gpui_kit::init(cx);
+            theme::apply_appearance(cx.window_appearance(), cx);
+            viewer::bind_keys(cx);
+            viewer::set_menus(cx);
+            let bounds = Bounds::centered(None, size(px(1400.), px(900.)), cx);
+            let window = gpui_kit::open_window(
+                WindowOptions {
+                    window_bounds: Some(WindowBounds::Windowed(bounds)),
+                    titlebar: Some(TitlebarOptions {
+                        title: Some("Ichnos".into()),
+                        ..TitlebarOptions::default()
+                    }),
+                    ..WindowOptions::default()
+                },
+                cx,
+                |window, cx| cx.new(|cx| Viewer::new(options, window, cx)),
+            );
+            match window {
+                Ok(_) => cx.activate(true),
+                Err(err) => {
+                    eprintln!("could not open the window: {err}");
+                    cx.quit();
+                }
             }
-        }
-    });
+        });
     ExitCode::SUCCESS
 }
