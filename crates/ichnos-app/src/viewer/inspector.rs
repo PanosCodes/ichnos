@@ -3,6 +3,7 @@
 use std::hash::{DefaultHasher, Hash as _, Hasher as _};
 
 use accesskit::Role;
+use gpui_kit::component::menu::{ContextMenu, ContextMenuExt as _, PopupMenuItem};
 use gpui_kit::component::text::{TextView, TextViewStyle};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
@@ -333,7 +334,7 @@ impl Viewer {
                                                     ),
                                             ),
                                     )
-                                    .child(block(section.tone, &section.body))
+                                    .child(block(section.tone, &section.body, cx))
                             }),
                     )
                     .when(prev.is_some() || next.is_some(), |d| {
@@ -698,7 +699,7 @@ pub(super) fn heading(title: impl Into<SharedString>) -> Div {
 /// A prose or code block whose text can be selected with the mouse.
 ///
 /// The text is shown as a fenced code block, so Markdown in it is left alone.
-pub(super) fn block(tone: SectionTone, text: &str) -> Div {
+pub(super) fn block(tone: SectionTone, text: &str, cx: &Context<Viewer>) -> impl IntoElement {
     let mut hasher = DefaultHasher::new();
     text.hash(&mut hasher);
     let id = SharedString::from(format!("block-{:x}", hasher.finish()));
@@ -708,7 +709,7 @@ pub(super) fn block(tone: SectionTone, text: &str) -> Div {
         .max()
         .unwrap_or_default();
     let fence = "`".repeat(longest_run.max(2) + 1);
-    let body = TextView::markdown(id, format!("{fence}\n{text}\n{fence}"))
+    let body = TextView::markdown(id.clone(), format!("{fence}\n{text}\n{fence}"))
         .selectable(true)
         .style(
             TextViewStyle::default().code_block(
@@ -720,13 +721,14 @@ pub(super) fn block(tone: SectionTone, text: &str) -> Div {
             ),
         );
     let block = div()
+        .id(SharedString::from(format!("{id}-content")))
         .px(px(10.))
         .py_2()
         .rounded(px(theme::R_CONTROL))
         .border_1()
         .bg(color(theme::FIELD))
         .border_color(color(theme::LINE));
-    match tone {
+    let block = match tone {
         SectionTone::Prose => block.text_color(color(theme::FG)),
         SectionTone::Code => block.text_color(color(theme::TEXT_2)),
         SectionTone::Err => block
@@ -734,7 +736,29 @@ pub(super) fn block(tone: SectionTone, text: &str) -> Div {
             .border_color(color(theme::RED_LINE))
             .text_color(color(theme::RED_SOFT)),
     }
-    .child(body)
+    .child(body);
+    text_area(id, text.to_owned(), block, cx)
+}
+
+/// A black text area whose context menu copies its complete text.
+pub(super) fn text_area(
+    id: SharedString,
+    text: String,
+    area: gpui_kit::Stateful<Div>,
+    cx: &Context<Viewer>,
+) -> ContextMenu<gpui_kit::Stateful<Div>> {
+    let viewer = cx.entity().downgrade();
+    div()
+        .id(id.clone())
+        .child(area)
+        .context_menu(move |menu, _, _| {
+            let (viewer, id, text) = (viewer.clone(), id.clone(), text.clone());
+            menu.item(PopupMenuItem::new("Copy").on_click(move |_, _, cx| {
+                viewer
+                    .update(cx, |this, cx| this.copy(id.clone(), text.clone(), cx))
+                    .ok();
+            }))
+        })
 }
 
 /// A mono badge in `tone`.

@@ -188,9 +188,12 @@ impl Viewer {
                     })
                     .child(super::inspector::heading("Prompt").mt_0())
                     .child(
-                        div()
-                            .id("ask-prompt")
-                            .max_h(px(220.))
+                        super::inspector::text_area(
+                            SharedString::from("ask-prompt"),
+                            copy_prompt.clone(),
+                            div()
+                                .id("ask-prompt-content")
+                                .max_h(px(220.))
                             .overflow_y_scroll()
                             .px(px(10.))
                             .py_2()
@@ -202,6 +205,8 @@ impl Viewer {
                             .text_size(px(theme::FS_SMALL))
                             .text_color(color(theme::TEXT_2))
                             .child(prompt),
+                            cx,
+                        ),
                     ),
             )
             .child(
