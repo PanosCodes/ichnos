@@ -80,6 +80,8 @@ Only one viewer runs at a time; `ichnos open` brings the running one forward.
 | --- | --- |
 | `ICHNOS_NO_OPEN=1` | New sessions don't open the viewer |
 | `ichnos open --no-summaries` | Start the viewer without the one-line summaries (see below) |
+| `ichnos open --no-search` | Start the viewer without search by meaning in the session switcher |
+| `ICHNOS_SUMMARIZER` / `ichnos open --summarizer '<command>'` | Write the summaries with another command (see below) |
 | `--settings <file>` | Make `install` / `uninstall` change a different settings file |
 
 ## Using the viewer
@@ -98,10 +100,16 @@ Only one viewer runs at a time; `ichnos open` brings the running one forward.
 - **Replay** with the strip under the toolbar: click anywhere on it, or press `space` to play.
   `▶|` goes back to live.
 - **Sessions** (`⌘K` / `Ctrl+K`) lets you search all sessions by first prompt, folder or id.
-- **Ask agent** builds a prompt you paste into Claude Code, so it can answer questions about the
-  session from the log.
-- **Summaries**: each step gets a plain-English one-liner from Claude Haiku, using your Claude
-  Code login.
+  Below those matches it lists **related** sessions: ones whose prompts, errors or summaries are
+  close in meaning to what you typed, even with different words. The model (~30 MB) downloads
+  once on first start, and everything stays on your machine. `ichnos open --no-search` turns it
+  off.
+- **Ask agent** builds a prompt you paste into your coding agent, so it can answer questions
+  about the session from the log.
+- **Summaries**: each step gets a plain-English one-liner. By default Claude Haiku writes it,
+  using your Claude Code login. Any command can take over: it gets the prompt on stdin and the
+  instructions in `$ICHNOS_SYSTEM_PROMPT`, and prints the reply. For example,
+  `ICHNOS_SUMMARIZER='llm -m gpt-4o-mini -s "$ICHNOS_SYSTEM_PROMPT"' ichnos open`.
 
 `ichnos open <session-id> --view graph` pins a session and picks the view.
 
@@ -131,7 +139,8 @@ like:
 ```
 ~/.ichnos/
   sessions/<session-id>.db   # one SQLite file per session
-  hook-errors.log            # hook and summarizer errors (the hook never blocks Claude Code)
+  index.db                   # search index for related sessions; safe to delete, it is rebuilt
+  hook-errors.log            # hook, log, summarizer and search errors (they never block the agent)
   app.log                    # the viewer's log when `ichnos open` started it
   app.sock                   # how `ichnos open` reaches the running viewer
 ```
@@ -148,14 +157,6 @@ sqlite3 ~/.ichnos/sessions/<session-id>.db "
 
 ## Development
 
-- `crates/ichnos-core`: the database, the live feed, the session model and the summarizer
-- `crates/ichnos`: the hook and the CLI; it stays small because it runs on every Claude Code event
-- `crates/ichnos-app`: the viewer, built with [GPUI](https://gpui.rs) and
-  [GPUI Kit](https://gpui-kit.com)
-
-```sh
-mise run check     # format check, lint and tests (including the viewer in a headless window)
-mise run app       # run the viewer from source
-mise run install   # install both programs into ~/.cargo/bin
-mise tasks         # list these
-```
+`mise run app` runs the viewer from source, and `mise run check` runs the same checks as CI.
+[`docs/architecture.md`](docs/architecture.md) explains how the pieces fit together, and
+[`AGENTS.md`](AGENTS.md) has the repo conventions.

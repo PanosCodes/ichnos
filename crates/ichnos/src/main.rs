@@ -88,6 +88,9 @@ enum Command {
         /// Start the viewer without the one-line Haiku summaries.
         #[arg(long)]
         no_summaries: bool,
+        /// Start the viewer without search by meaning in the session switcher.
+        #[arg(long)]
+        no_search: bool,
         /// Command line that writes the one-line summaries (prompt on stdin, reply on stdout)
         /// [default: `claude -p --model haiku …`].
         #[arg(long, env = "ICHNOS_SUMMARIZER")]
@@ -206,6 +209,7 @@ fn main() -> ExitCode {
             view,
             unless_open,
             no_summaries,
+            no_search,
             summarizer,
         } => match open::run(
             &dir,
@@ -214,6 +218,7 @@ fn main() -> ExitCode {
                 view,
                 unless_open,
                 no_summaries,
+                no_search,
                 summarizer: summarizer.as_deref(),
             },
         ) {

@@ -32,6 +32,7 @@ use ichnos_model::call::Key;
 use ichnos_model::labels::Summaries;
 use ichnos_model::model::{Bounds, Moment, SessionModel, build_session, moments, session_bounds};
 use ichnos_model::session_data::SessionData;
+use ichnos_search::Search;
 
 use self::ask_panel::AskPanel;
 use self::switcher::{Switcher, SwitcherEvent};
@@ -132,6 +133,8 @@ pub struct Options {
     pub view: View,
     /// The summarizer, unless summaries are off.
     pub summaries: Option<SummaryHost>,
+    /// Search by meaning for the session switcher, unless it is off.
+    pub search: Option<Search>,
     /// Requests from `ichnos open` and `ichnos stop`.
     pub listener: Option<Listener>,
 }
@@ -148,6 +151,7 @@ pub struct Viewer {
     focus: FocusHandle,
     sessions_dir: PathBuf,
     summaries: Option<SummaryHost>,
+    search: Option<Search>,
     listener: Option<Listener>,
     catalog: Arc<Mutex<Catalog>>,
     sessions: Vec<SessionEntry>,
@@ -214,6 +218,7 @@ impl Viewer {
             catalog: Arc::new(Mutex::new(Catalog::new(sessions_dir.clone()))),
             sessions_dir,
             summaries: options.summaries,
+            search: options.search,
             listener: options.listener,
             sessions: Vec::new(),
             follow_newest: options.session.is_none(),
@@ -610,7 +615,8 @@ impl Viewer {
         }
         let sessions = self.sessions.clone();
         let current = self.session.clone();
-        let switcher = cx.new(|cx| Switcher::new(sessions, current, window, cx));
+        let search = self.search.clone();
+        let switcher = cx.new(|cx| Switcher::new(sessions, current, search, window, cx));
         self.subscriptions.push(cx.subscribe_in(
             &switcher,
             window,

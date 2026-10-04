@@ -79,6 +79,8 @@ pub struct OpenArgs<'a> {
     pub unless_open: bool,
     /// Start the app without summaries.
     pub no_summaries: bool,
+    /// Start the app without search by meaning.
+    pub no_search: bool,
     /// The command line the app's summarizer runs; `None` keeps the app's default.
     pub summarizer: Option<&'a str>,
 }
@@ -156,6 +158,9 @@ fn start_app(dir: &Path, socket: &Path, args: OpenArgs<'_>) -> Result<(), OpenEr
     }
     if args.no_summaries {
         command.arg("--no-summaries");
+    }
+    if args.no_search {
+        command.arg("--no-search");
     }
     if let Some(summarizer) = args.summarizer {
         command.args(["--summarizer", summarizer]);

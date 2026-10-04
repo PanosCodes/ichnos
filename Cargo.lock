@@ -3491,6 +3491,7 @@ dependencies = [
  "gpui-kit",
  "ichnos-core",
  "ichnos-model",
+ "ichnos-search",
  "mimalloc",
  "serde_json",
  "tempfile",
