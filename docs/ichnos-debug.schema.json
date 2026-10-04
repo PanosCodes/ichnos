@@ -1,0 +1,214 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ichnos-debug",
+  "description": "The model's own account of one turn. These are statements by the model, not a trace of its reasoning. Every section is optional; the instructions ask for some of them, and a section that was asked for but is missing means the format was ignored.",
+  "type": "object",
+  "required": ["v"],
+  "additionalProperties": false,
+  "properties": {
+    "v": { "const": 1 },
+
+    "task": {
+      "description": "Did it understand what was asked?",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["intent", "scope_added", "scope_dropped"],
+      "properties": {
+        "intent": { "$ref": "#/$defs/phrase", "description": "Its one-line reading of the request." },
+        "scope_added": { "$ref": "#/$defs/phrases", "description": "Work done that wasn't asked for." },
+        "scope_dropped": { "$ref": "#/$defs/phrases", "description": "Parts of the request not done." }
+      }
+    },
+
+    "decisions": {
+      "description": "What did it choose, and on what basis?",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["choices", "assumptions"],
+      "properties": {
+        "choices": {
+          "type": "array",
+          "maxItems": 5,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["chose", "over", "why"],
+            "properties": {
+              "chose": { "$ref": "#/$defs/phrase" },
+              "over": { "$ref": "#/$defs/phrases", "description": "The options it rejected." },
+              "why": { "$ref": "#/$defs/phrase" }
+            }
+          }
+        },
+        "assumptions": {
+          "type": "array",
+          "maxItems": 5,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["assumed", "could_have_checked"],
+            "properties": {
+              "assumed": { "$ref": "#/$defs/phrase" },
+              "could_have_checked": { "type": "boolean" }
+            }
+          }
+        }
+      }
+    },
+
+    "context": {
+      "description": "What did it rely on, and what was missing?",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["relied_on", "from_memory", "missing_info"],
+      "properties": {
+        "relied_on": { "$ref": "#/$defs/phrases", "description": "Files, docs or instructions that shaped the reply." },
+        "from_memory": { "$ref": "#/$defs/phrases", "description": "Claims based on training, not on anything read in this session." },
+        "missing_info": { "$ref": "#/$defs/phrases", "description": "What it needed and couldn't find." }
+      }
+    },
+
+    "tools": {
+      "description": "Where did the environment get in its way?",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["friction", "wished_for"],
+      "properties": {
+        "friction": {
+          "type": "array",
+          "maxItems": 5,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["tool", "problem", "workaround"],
+            "properties": {
+              "tool": { "$ref": "#/$defs/name" },
+              "problem": { "$ref": "#/$defs/phrase" },
+              "workaround": { "$ref": "#/$defs/phrase" }
+            }
+          }
+        },
+        "wished_for": { "$ref": "#/$defs/phrases", "description": "Tools or access it lacked." }
+      }
+    },
+
+    "skills": {
+      "description": "Did the skills work?",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["considered", "skipped_steps", "missing_guidance", "unclear_instructions"],
+      "properties": {
+        "considered": {
+          "description": "Skills it thought about this turn, loaded or not.",
+          "type": "array",
+          "maxItems": 5,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["skill", "loaded", "reason"],
+            "properties": {
+              "skill": { "$ref": "#/$defs/name" },
+              "loaded": { "type": "boolean" },
+              "reason": { "$ref": "#/$defs/phrase" }
+            }
+          }
+        },
+        "skipped_steps": {
+          "type": "array",
+          "maxItems": 5,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["skill", "step", "reason"],
+            "properties": {
+              "skill": { "$ref": "#/$defs/name" },
+              "step": { "$ref": "#/$defs/phrase" },
+              "reason": { "$ref": "#/$defs/phrase" }
+            }
+          }
+        },
+        "missing_guidance": {
+          "description": "Situations a skill didn't cover, so the model improvised.",
+          "type": "array",
+          "maxItems": 5,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["skill", "situation", "needed"],
+            "properties": {
+              "skill": { "$ref": "#/$defs/name" },
+              "situation": { "$ref": "#/$defs/phrase" },
+              "needed": { "$ref": "#/$defs/phrase" }
+            }
+          }
+        },
+        "unclear_instructions": {
+          "type": "array",
+          "maxItems": 5,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["source", "text", "read_as"],
+            "properties": {
+              "source": { "$ref": "#/$defs/name" },
+              "text": { "$ref": "#/$defs/phrase", "description": "The wording, quoted." },
+              "read_as": { "$ref": "#/$defs/phrase" }
+            }
+          }
+        }
+      }
+    },
+
+    "rules": {
+      "description": "Which instructions disagreed?",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["conflicts"],
+      "properties": {
+        "conflicts": {
+          "type": "array",
+          "maxItems": 5,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["a", "b", "followed", "reason"],
+            "properties": {
+              "a": { "$ref": "#/$defs/source" },
+              "b": { "$ref": "#/$defs/source" },
+              "followed": { "enum": ["a", "b", "neither"] },
+              "reason": { "$ref": "#/$defs/phrase" }
+            }
+          }
+        }
+      }
+    },
+
+    "outcome": {
+      "description": "Is it finished, and how sure is it?",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["state", "remaining", "unverified_claims", "risks"],
+      "properties": {
+        "state": { "enum": ["done", "partial", "blocked", "question"] },
+        "remaining": { "$ref": "#/$defs/phrases" },
+        "unverified_claims": { "$ref": "#/$defs/phrases", "description": "Statements made without checking them in this session." },
+        "risks": { "$ref": "#/$defs/phrases", "description": "What might break because of the change." }
+      }
+    }
+  },
+
+  "$defs": {
+    "name": { "type": "string", "minLength": 1, "maxLength": 80 },
+    "phrase": { "type": "string", "minLength": 1, "maxLength": 200 },
+    "phrases": { "type": "array", "maxItems": 5, "items": { "$ref": "#/$defs/phrase" } },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["where", "says"],
+      "properties": {
+        "where": { "$ref": "#/$defs/name", "description": "A skill, CLAUDE.md, AGENTS.md, a memory or the prompt." },
+        "says": { "$ref": "#/$defs/phrase" }
+      }
+    }
+  }
+}
