@@ -3,6 +3,7 @@
 use accesskit::Role;
 use std::ops::Range;
 
+use gpui_kit::TestSupportExt as _;
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
     AnyElement, Context, FontWeight, InteractiveElement as _, IntoElement, ParentElement as _,
@@ -88,7 +89,8 @@ impl Viewer {
         let dur = call.duration_ms().or_else(|| {
             (call.status() == Some(Status::Started)).then(|| self.model.end() - call.start())
         });
-        div()
+        let row_id = call.first().row_id();
+        let row = div()
             .id(("table-row", ix))
             .role(Role::Button)
             .aria_label(format!(
@@ -130,7 +132,8 @@ impl Viewer {
                     .child(div().flex_1().min_w_0().truncate().child(one_line(&what)))
                     .when_some(skill_name(call), |d, name| d.child(Viewer::skill_tag(name))),
             )
-            .into_any_element()
+            .test_support();
+        Viewer::with_row_menu(row, call.key().clone(), Some(row_id), cx)
     }
 }
 

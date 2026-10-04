@@ -14,10 +14,11 @@ use ichnos_model::call::Key;
 use ichnos_model::labels::{clock, duration, label, tokens};
 use ichnos_model::model::{FileTouch, NodeId, NodeKind, StateAt};
 
-use super::{Viewer, one_line};
+use super::{FOR_AGENT, Viewer, one_line};
 use crate::present::{SectionTone, Tone, look, pretty, sections, status_text};
 use crate::theme::{self, MONO, color, tone_text};
 use crate::view_state::{InspectorTab, View};
+use gpui_kit::TestSupportExt as _;
 
 /// Where the Todo list's status icons come from.
 fn todo_icon(status: &str) -> &'static str {
@@ -234,7 +235,26 @@ impl Viewer {
                                     .text_color(color(theme::MUTED))
                                     .whitespace_nowrap()
                                     .child(when),
-                            ),
+                            )
+                            .when_some(node.row_id(), |d, row_id| {
+                                d.child(
+                                    link(
+                                        FOR_AGENT.into(),
+                                        if self.is_copied(FOR_AGENT) {
+                                            "copied"
+                                        } else {
+                                            "copy for agent"
+                                        },
+                                    )
+                                    .whitespace_nowrap()
+                                    .text_size(px(theme::FS_SMALL))
+                                    .text_color(color(theme::DIM))
+                                    .on_click(cx.listener(move |this, _, _, cx| {
+                                        this.copy_for_agent(row_id, cx);
+                                    }))
+                                    .test_support(),
+                                )
+                            }),
                     )
                     .child(
                         div()

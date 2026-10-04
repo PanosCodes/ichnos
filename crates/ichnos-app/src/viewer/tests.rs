@@ -351,3 +351,96 @@ fn every_view_keeps_the_follow_toggle(cx: &mut TestAppContext) {
         });
     }
 }
+
+/// What the clipboard holds as text.
+fn clipboard(visual: &mut VisualTestContext) -> Option<String> {
+    visual.update(|_, cx| cx.read_from_clipboard().and_then(|item| item.text()))
+}
+
+#[gpui_kit::test]
+fn the_inspector_copies_the_selected_event_for_an_agent(cx: &mut TestAppContext) {
+    use gpui_kit::test::TestWindowExt as _;
+
+    let dir = tempfile::tempdir().unwrap();
+    let (_viewer, mut visual) = open(cx, dir.path());
+    press(&mut visual, "j j");
+    visual.update(|window, cx| {
+        window.render_frame(cx);
+        window.click("copy-for-agent", cx);
+    });
+    // `t1`'s `PreToolUse` is the session's second event.
+    assert_eq!(clipboard(&mut visual).as_deref(), Some("/ichnos s1#2"));
+}
+
+/// Right-click tree row `key` and pick item `item` of its menu.
+fn pick_from_row_menu(
+    viewer: &Entity<Viewer>,
+    visual: &mut VisualTestContext,
+    key: &str,
+    item: usize,
+) {
+    use gpui_kit::test::TestWindowExt as _;
+
+    let index = visual.update(|_, cx| {
+        let viewer = viewer.read(cx);
+        let row = viewer
+            .rows
+            .iter()
+            .find(|row| viewer.model.node(row.id).key().as_str() == key);
+        row.unwrap().id.index()
+    });
+    visual.update(|window, cx| {
+        window.render_frame(cx);
+        window.right_click(("row", index), cx);
+    });
+    settle(visual);
+    visual.update(|window, cx| {
+        window.render_frame(cx);
+        window.within("popup-menu").click(item, cx);
+    });
+    settle(visual);
+}
+
+#[gpui_kit::test]
+fn a_row_s_right_click_menu_copies_its_events(cx: &mut TestAppContext) {
+    let dir = tempfile::tempdir().unwrap();
+    let (viewer, mut visual) = open(cx, dir.path());
+    pick_from_row_menu(&viewer, &mut visual, "t1", 0);
+    let copied: Value = serde_json::from_str(&clipboard(&mut visual).unwrap()).unwrap();
+    let events: Vec<&str> = copied
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|event| event["event"].as_str().unwrap())
+        .collect();
+    assert_eq!(events, ["PreToolUse", "PostToolUseFailure"]);
+}
+
+#[gpui_kit::test]
+fn a_row_s_right_click_menu_copies_its_event_for_an_agent(cx: &mut TestAppContext) {
+    let dir = tempfile::tempdir().unwrap();
+    let (viewer, mut visual) = open(cx, dir.path());
+    pick_from_row_menu(&viewer, &mut visual, "t1", 1);
+    assert_eq!(clipboard(&mut visual).as_deref(), Some("/ichnos s1#2"));
+}
+
+#[gpui_kit::test]
+fn a_table_row_s_right_click_menu_copies_its_event_for_an_agent(cx: &mut TestAppContext) {
+    use gpui_kit::test::TestWindowExt as _;
+
+    let dir = tempfile::tempdir().unwrap();
+    let (_viewer, mut visual) = open(cx, dir.path());
+    press(&mut visual, "b");
+    visual.update(|window, cx| {
+        window.render_frame(cx);
+        // The table's first row is the prompt, the session's first event.
+        window.right_click(("table-row", 0usize), cx);
+    });
+    settle(&mut visual);
+    visual.update(|window, cx| {
+        window.render_frame(cx);
+        window.within("popup-menu").click(1usize, cx);
+    });
+    settle(&mut visual);
+    assert_eq!(clipboard(&mut visual).as_deref(), Some("/ichnos s1#1"));
+}

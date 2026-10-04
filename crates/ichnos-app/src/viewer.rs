@@ -19,6 +19,7 @@ use std::time::{Duration, Instant};
 
 use gpui_kit::TestSupportExt as _;
 use gpui_kit::component::input::{InputEvent, InputState};
+use gpui_kit::component::menu::{ContextMenuExt as _, PopupMenuItem};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
     AnyElement, App, AppContext as _, ClipboardItem, Context, Entity, FocusHandle, Focusable,
@@ -39,9 +40,10 @@ use ichnos_search::Search;
 use self::ask_panel::AskPanel;
 use self::switcher::{Switcher, SwitcherEvent};
 use crate::live::{Connection, LiveSession};
+use crate::present::pretty;
 use crate::summary_host::SummaryHost;
 use crate::theme::{self, color};
-use crate::view_state::{TableRow, TreeRow, View, ViewState};
+use crate::view_state::{TableRow, TreeRow, View, ViewState, agent_reference};
 
 /// How often the shown session's database is polled; also one replay step while playing.
 const POLL_INTERVAL: Duration = Duration::from_millis(250);
@@ -57,6 +59,10 @@ const COPIED_FOR: Duration = Duration::from_millis(1200);
 const LONG_MS: i64 = 10_000;
 /// Height of every tree and table row.
 const ROW_HEIGHT: f32 = 28.;
+/// What "copied" shows on after an event is copied for an agent.
+const FOR_AGENT: &str = "copy-for-agent";
+/// What "copied" shows on after a row is copied from its menu.
+const COPY_ROW: &str = "copy-row";
 
 /// Key context of the viewer; single-key shortcuts only apply outside text inputs.
 const CONTEXT: &str = "IchnosViewer";
@@ -632,6 +638,67 @@ impl Viewer {
         cx.write_to_clipboard(ClipboardItem::new_string(text));
         self.copied = Some((what.into(), Instant::now()));
         cx.notify();
+    }
+
+    /// Copy event `row_id` of the shown session as an `/ichnos` reference to give an agent.
+    fn copy_for_agent(&mut self, row_id: i64, cx: &mut Context<Self>) {
+        if let Some(session) = &self.session {
+            let text = agent_reference(session, row_id);
+            self.copy(FOR_AGENT, text, cx);
+        }
+    }
+
+    /// Copy row `key`'s events as pretty JSON, as the inspector's "raw" does.
+    fn copy_row(&mut self, key: &Key, cx: &mut Context<Self>) {
+        let events = match self.model.find(key) {
+            Some(id) => self.model.node(id).raw_data(),
+            None => self
+                .table
+                .iter()
+                .find(|row| row.call.key() == key)
+                .map(|row| {
+                    row.call
+                        .events()
+                        .iter()
+                        .map(|event| serde_json::from_str(event.json()).unwrap_or_default())
+                        .collect()
+                })
+                .unwrap_or_default(),
+        };
+        self.copy(COPY_ROW, pretty(&serde_json::Value::Array(events)), cx);
+    }
+
+    /// `row` with a right-click menu: "Copy" copies row `key`'s events, and "Copy for agent"
+    /// copies event `row_id` for an agent when the row names a single event.
+    fn with_row_menu(
+        row: impl IntoElement + 'static,
+        key: Key,
+        row_id: Option<i64>,
+        cx: &Context<Self>,
+    ) -> AnyElement {
+        let viewer = cx.entity().downgrade();
+        // Its own id per row: without one every row shares the same menu state.
+        div()
+            .id(SharedString::from(format!("row-menu-{key}")))
+            .w_full()
+            .child(row)
+            .context_menu(move |menu, _, _| {
+                let (copy, for_agent, key) = (viewer.clone(), viewer.clone(), key.clone());
+                let menu = menu.item(PopupMenuItem::new("Copy").on_click(move |_, _, cx| {
+                    copy.update(cx, |this, cx| this.copy_row(&key, cx)).ok();
+                }));
+                let Some(row_id) = row_id else {
+                    return menu;
+                };
+                menu.item(
+                    PopupMenuItem::new("Copy for agent").on_click(move |_, _, cx| {
+                        for_agent
+                            .update(cx, |this, cx| this.copy_for_agent(row_id, cx))
+                            .ok();
+                    }),
+                )
+            })
+            .into_any_element()
     }
 
     fn is_copied(&self, what: &str) -> bool {

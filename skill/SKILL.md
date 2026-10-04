@@ -1,6 +1,6 @@
 ---
 name: ichnos
-description: Query Ichnos's logs of coding-agent sessions (Claude Code and others) with SQL. Use when asked what happened in an agent session (this one or an earlier one), to find which past session worked on something, why a tool call failed, which files a session changed, what a subagent did, how long things took, or to compare sessions.
+description: Query Ichnos's logs of coding-agent sessions (Claude Code and others) with SQL. Use when asked what happened in an agent session (this one or an earlier one), to find which past session worked on something, why a tool call failed, which files a session changed, what a subagent did, how long things took, to compare sessions, or when given an event as `<session-id>#<event-id>`.
 ---
 
 # Ichnos logs
@@ -10,6 +10,21 @@ input, output, errors and durations, subagents, the model's text between calls, 
 that ended each turn. Each session
 is one SQLite file. Query it with `sqlite3` and answer from the rows; cite event ids so the user
 can find them in the viewer.
+
+## Given an event: `/ichnos <session-id>#<event-id> …`
+
+The viewer's "Copy for agent" gives an event as `/ichnos <session-id>#<event-id>`, often
+followed by a question. Read that event before anything else:
+
+1. Its database is `sessions/<session-id>.db`; `<event-id>` is its `events.id`.
+2. If the event has a `tool_use_id`, it is a call: run the "One call in full" recipe below with
+   that id. Otherwise read the one event:
+   `SELECT id, event, substr(record, 1, 4000) FROM events WHERE id = <event-id>`.
+3. Find its turn, the last `UserPromptSubmit` at or before it, so you know what was being
+   asked: `SELECT id, substr(record->>'$.prompt', 1, 500) FROM events
+   WHERE event = 'UserPromptSubmit' AND id <= <event-id> ORDER BY id DESC LIMIT 1`.
+4. Answer the question that follows the reference. With none, say what the event is, what
+   happened, and anything that went wrong.
 
 ## Where the logs are
 

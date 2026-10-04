@@ -562,6 +562,13 @@ impl PanelWidth {
     }
 }
 
+/// Event `row_id` of `session` as a prompt for an agent: `/ichnos <session>#<row_id>`, which
+/// runs the `ichnos` skill on that event.
+#[must_use]
+pub fn agent_reference(session: &SessionId, row_id: i64) -> String {
+    format!("/ichnos {}#{row_id}", session.as_str())
+}
+
 /// The tick nearest to `at` within `tolerance`, as an index into `ticks`; all three are
 /// fractions of the replay strip's width.
 #[must_use]
@@ -747,6 +754,15 @@ mod tests {
         state.panel_mut().toggle();
         state.reset_for_session();
         assert!(!state.panel().is_open());
+    }
+
+    #[test]
+    fn an_agent_reference_names_the_session_and_the_event() {
+        let session: SessionId = "afde7f06-8de7-4806-9714-a72e071cedd9".parse().unwrap();
+        assert_eq!(
+            agent_reference(&session, 68),
+            "/ichnos afde7f06-8de7-4806-9714-a72e071cedd9#68"
+        );
     }
 
     #[test]
