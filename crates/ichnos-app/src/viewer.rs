@@ -24,8 +24,9 @@ use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
     AnyElement, App, AppContext as _, ClipboardItem, Context, Entity, FocusHandle, Focusable,
     InteractiveElement as _, IntoElement, KeyBinding, MouseButton, MouseDownEvent, MouseMoveEvent,
-    MouseUpEvent, ParentElement as _, Render, ScrollStrategy, SharedString, Styled as _,
-    Subscription, UniformListScrollHandle, Window, actions, div, px,
+    MouseUpEvent, ParentElement as _, Render, ScrollStrategy, SharedString,
+    StatefulInteractiveElement as _, Styled as _, Subscription, UniformListScrollHandle, Window,
+    actions, div, px,
 };
 use ichnos_core::catalog::{Catalog, SessionEntry};
 use ichnos_core::instance::{Command, Listener};
@@ -58,7 +59,7 @@ const COPIED_FOR: Duration = Duration::from_millis(1200);
 /// Rows longer than this get a bold duration.
 const LONG_MS: i64 = 10_000;
 /// Height of every tree and table row.
-const ROW_HEIGHT: f32 = 28.;
+const ROW_HEIGHT: f32 = 32.;
 /// What "copied" shows on after an event is copied for an agent.
 const FOR_AGENT: &str = "copy-for-agent";
 /// What "copied" shows on after a row is copied from its menu.
@@ -200,6 +201,8 @@ pub struct Viewer {
     /// The pointer over the replay strip, as a fraction of its width, and the fraction a tick
     /// may be from it and still count as hovered.
     replay_hover: Option<(f32, f32)>,
+    /// Where the replay strip was last painted.
+    strip: std::rc::Rc<std::cell::Cell<Option<gpui_kit::Bounds<gpui_kit::Pixels>>>>,
     switcher: Option<Entity<Switcher>>,
     ask: Option<Entity<AskPanel>>,
     /// Whether the Ask panel focuses on the selected row.
@@ -207,6 +210,32 @@ pub struct Viewer {
     /// Whether the keyboard shortcuts overlay is open.
     help: bool,
     subscriptions: Vec<Subscription>,
+}
+
+#[cfg(feature = "screenshots")]
+impl Viewer {
+    /// Put the viewer in a state worth a screenshot: `selected`, `turn`, `replay`, `switcher`, `ask` or
+    /// `help`; anything else leaves it as opened.
+    pub fn apply_shot(&mut self, shot: &str, window: &mut Window, cx: &mut Context<Self>) {
+        match shot {
+            "selected" => self.on_next_error(&NextError, window, cx),
+            "turn" => {
+                if let Some(&turn) = self.model.turns().last() {
+                    let key = self.model.node(turn).key().clone();
+                    self.select(key, false, cx);
+                }
+            }
+            "replay" => {
+                if let Some(b) = self.bounds {
+                    self.seek(b.t0 + (b.t1 - b.t0) / 2, cx);
+                }
+            }
+            "switcher" => self.toggle_switcher(window, cx),
+            "ask" => self.toggle_ask(false, window, cx),
+            "help" => self.toggle_help(cx),
+            _ => {}
+        }
+    }
 }
 
 impl Viewer {
@@ -239,7 +268,13 @@ impl Viewer {
             InputState::new(window, cx)
                 .placeholder("Filter: is:error tool:Bash file:feed.rs agent:Explore")
         });
-        let subscriptions = vec![cx.subscribe_in(&filter_input, window, Self::on_filter_input)];
+        let subscriptions = vec![
+            cx.subscribe_in(&filter_input, window, Self::on_filter_input),
+            cx.observe_window_appearance(window, |_, window, cx| {
+                theme::apply_appearance(window.appearance(), cx);
+                cx.notify();
+            }),
+        ];
         let mut viewer = Self {
             focus: cx.focus_handle(),
             catalog: Arc::new(Mutex::new(Catalog::new(sessions_dir.clone()))),
@@ -265,6 +300,7 @@ impl Viewer {
             copied: None,
             tool_sort: ToolSort::Time,
             replay_hover: None,
+            strip: std::rc::Rc::default(),
             switcher: None,
             ask: None,
             ask_focus: false,
@@ -596,6 +632,28 @@ impl Viewer {
         }
     }
 
+    /// Seek to the strip position under window x-coordinate `x`, clamped to the strip.
+    fn scrub_to(&mut self, x: f32, cx: &mut Context<Self>) {
+        let (Some(b), Some(rail)) = (self.bounds, self.strip.get()) else {
+            return;
+        };
+        let width = f32::from(rail.size.width).max(1.);
+        let at = ((x - f32::from(rail.origin.x)) / width).clamp(0., 1.);
+        #[expect(
+            clippy::cast_possible_truncation,
+            clippy::cast_precision_loss,
+            reason = "a pixel fraction of a millisecond span"
+        )]
+        let ms = b.t0 + (at * (b.t1 - b.t0) as f32).round() as i64;
+        self.seek(ms, cx);
+    }
+
+    fn set_all_open(&mut self, open: bool, cx: &mut Context<Self>) {
+        self.state.set_all_open(&self.model, open);
+        self.refresh();
+        cx.notify();
+    }
+
     fn seek(&mut self, ms: i64, cx: &mut Context<Self>) {
         self.state.pause();
         self.state.seek(self.bounds, ms);
@@ -816,6 +874,8 @@ impl Viewer {
     fn render_panel_handle(cx: &mut Context<Self>) -> impl IntoElement {
         div()
             .id("panel-handle")
+            .role(accesskit::Role::Splitter)
+            .aria_label("Resize inspector")
             .flex_none()
             .w(px(crate::view_state::HANDLE_WIDTH))
             .border_l_1()
@@ -837,6 +897,7 @@ impl Viewer {
     }
 
     fn end_panel_drag(&mut self, cx: &mut Context<Self>) {
+        self.state.set_scrubbing(false);
         if self.state.panel().is_dragging() {
             self.state.panel_mut().end();
             cx.notify();
@@ -861,30 +922,33 @@ impl Render for Viewer {
         let view = self.state.view();
         let content = match view {
             View::Graph => self.render_graph(cx),
-            View::Table => self.render_table(cx),
+            View::Table => self.render_table(window, cx),
             View::Tree => self.render_tree(cx),
         };
         let panel = self.state.panel().is_open().then(|| match view {
             View::Graph => self.render_agent_inspector(cx),
             View::Tree | View::Table => self.render_inspector(window, cx).into_any_element(),
         });
-        let main = div()
-            .flex()
-            .flex_row()
-            .flex_1()
-            .min_h_0()
-            .child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .flex_1()
-                    .min_w_0()
-                    .child(self.render_stats())
-                    .child(content),
-            )
-            .when_some(panel, |d, panel| {
-                d.child(Self::render_panel_handle(cx)).child(panel)
-            });
+        let main =
+            div()
+                .flex()
+                .flex_row()
+                .flex_1()
+                .min_h_0()
+                .child(
+                    div()
+                        .flex()
+                        .flex_col()
+                        .flex_1()
+                        .min_w_0()
+                        .child(self.render_stats(
+                            f32::from(window.viewport_size().width) < toolbar::NARROW,
+                        ))
+                        .child(content),
+                )
+                .when_some(panel, |d, panel| {
+                    d.child(Self::render_panel_handle(cx)).child(panel)
+                });
 
         div()
             .key_context(CONTEXT)
@@ -910,6 +974,9 @@ impl Render for Viewer {
             }))
             .on_action(cx.listener(Self::on_dismiss))
             .on_mouse_move(cx.listener(|this, event: &MouseMoveEvent, window, cx| {
+                if this.state.scrubbing() && event.pressed_button == Some(MouseButton::Left) {
+                    this.scrub_to(f32::from(event.position.x), cx);
+                }
                 let window = f32::from(window.viewport_size().width);
                 if this
                     .state
@@ -946,7 +1013,7 @@ impl Render for Viewer {
             // Lets the inspector's text blocks be selected with the mouse and copied.
             .child(gpui_kit::base::TextSelectionLayer)
             .child(self.render_toolbar(window, cx))
-            .child(self.render_replay(cx))
+            .child(self.render_replay(window, cx))
             .child(main)
             .children(self.ask.clone().map(|ask| self.render_ask(&ask, cx)))
             .when(self.help, |d| d.child(Self::render_help(cx)))

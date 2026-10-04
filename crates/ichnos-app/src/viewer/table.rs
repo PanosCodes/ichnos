@@ -7,7 +7,7 @@ use gpui_kit::TestSupportExt as _;
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
     AnyElement, Context, FontWeight, InteractiveElement as _, IntoElement, ParentElement as _,
-    StatefulInteractiveElement as _, Styled as _, div, px, uniform_list,
+    StatefulInteractiveElement as _, Styled as _, Window, div, px, uniform_list,
 };
 use ichnos_core::event::Status;
 use ichnos_model::labels::{clock, duration, skill_name, summarize};
@@ -17,10 +17,21 @@ use super::{ROW_HEIGHT, Viewer, one_line};
 use crate::theme::{self, MONO, color};
 
 /// Column widths: time, agent, tool or event, status, duration; the summary takes the rest.
-const COLUMNS: [f32; 5] = [80., 110., 140., 80., 80.];
+const COLUMNS: [f32; 5] = [80., 110., 140., 80., 96.];
+
+/// Columns dropped (agent, status) when the main pane is narrower than [`COMPACT_BELOW`].
+const OPTIONAL: [usize; 2] = [1, 3];
+
+/// Main pane width, in pixels, below which the table drops its optional columns.
+const COMPACT_BELOW: f32 = 760.;
 
 impl Viewer {
-    pub(super) fn render_table(&self, cx: &mut Context<Self>) -> AnyElement {
+    pub(super) fn render_table(&self, window: &Window, cx: &mut Context<Self>) -> AnyElement {
+        let compact = self
+            .state
+            .panel()
+            .main_width(f32::from(window.viewport_size().width))
+            < COMPACT_BELOW;
         if self.table.is_empty() {
             return empty("No entries.").into_any_element();
         }
@@ -53,6 +64,7 @@ impl Viewer {
                         header
                             .iter()
                             .enumerate()
+                            .filter(|(i, _)| !(compact && OPTIONAL.contains(i)))
                             .map(|(i, name)| cell(i).child(name.to_uppercase())),
                     ),
             )
@@ -60,9 +72,9 @@ impl Viewer {
                 uniform_list(
                     "table",
                     self.table.len(),
-                    cx.processor(|this, range: Range<usize>, _window, cx| {
+                    cx.processor(move |this, range: Range<usize>, _window, cx| {
                         range
-                            .map(|ix| this.render_table_row(ix, cx))
+                            .map(|ix| this.render_table_row(ix, compact, cx))
                             .collect::<Vec<_>>()
                     }),
                 )
@@ -73,7 +85,7 @@ impl Viewer {
             .into_any_element()
     }
 
-    fn render_table_row(&self, ix: usize, cx: &mut Context<Self>) -> AnyElement {
+    fn render_table_row(&self, ix: usize, compact: bool, cx: &mut Context<Self>) -> AnyElement {
         let row = &self.table[ix];
         let call = &row.call;
         let key = call.key().clone();
@@ -111,15 +123,20 @@ impl Viewer {
             .when(failed, |d| d.text_color(color(theme::RED_SOFT)))
             .when(selected, |d| {
                 d.bg(color(theme::SEL))
+                    .border_b_0()
                     .border_l_2()
                     .border_color(color(theme::BLUE))
             })
             .hover(|s| s.bg(color(theme::HOVER)))
             .on_click(cx.listener(move |this, _, _, cx| this.select(key.clone(), false, cx)))
             .child(mono(cell(0)).child(clock(call.start())))
-            .child(cell(1).child(call.agent_type().unwrap_or(call.agent_id()).to_owned()))
+            .when(!compact, |d| {
+                d.child(cell(1).child(call.agent_type().unwrap_or(call.agent_id()).to_owned()))
+            })
             .child(cell(2).child(call.tool_name().unwrap_or(call.name()).to_owned()))
-            .child(cell(3).child(call.status().map(Status::as_str).unwrap_or_default()))
+            .when(!compact, |d| {
+                d.child(cell(3).child(call.status().map(Status::as_str).unwrap_or_default()))
+            })
             .child(mono(cell(4)).child(dur.map(duration).unwrap_or_default()))
             .child(
                 cell(5)

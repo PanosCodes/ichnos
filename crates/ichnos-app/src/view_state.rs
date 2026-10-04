@@ -45,6 +45,13 @@ pub struct TableRow {
     pub node: Option<NodeId>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+enum Scrub {
+    #[default]
+    Idle,
+    Held,
+}
+
 /// Interaction state of one viewer window.
 #[derive(Debug, Clone)]
 pub struct ViewState {
@@ -56,6 +63,8 @@ pub struct ViewState {
     tail: bool,
     replay_at: Option<i64>,
     playing: bool,
+    /// Whether a press on the replay strip is held, so moving the pointer scrubs.
+    scrub: Scrub,
     /// Node key -> expanded, only for nodes the user toggled.
     open: HashMap<Key, bool>,
     selected: Option<Key>,
@@ -81,6 +90,7 @@ impl Default for ViewState {
             tail: true,
             replay_at: None,
             playing: false,
+            scrub: Scrub::Idle,
             open: HashMap::new(),
             selected: None,
             agent: ichnos_core::event::MAIN_AGENT.to_owned(),
@@ -436,6 +446,17 @@ impl ViewState {
             self.tail = false;
         }
         self.playing = true;
+    }
+
+    /// Whether a press on the replay strip is held.
+    #[must_use]
+    pub fn scrubbing(&self) -> bool {
+        self.scrub == Scrub::Held
+    }
+
+    /// Note that a press on the replay strip started or ended.
+    pub fn set_scrubbing(&mut self, held: bool) {
+        self.scrub = if held { Scrub::Held } else { Scrub::Idle };
     }
 
     /// Stop playing.
@@ -975,5 +996,15 @@ mod tests {
         let kept = related_matches(&related, &[&a], &[&a, &b, &c]);
         let sessions: Vec<&str> = kept.iter().map(|found| found.session.as_str()).collect();
         assert_eq!(sessions, ["c", "b"]);
+    }
+
+    #[test]
+    fn scrubbing_is_held_between_press_and_release() {
+        let mut state = ViewState::default();
+        assert!(!state.scrubbing());
+        state.set_scrubbing(true);
+        assert!(state.scrubbing());
+        state.set_scrubbing(false);
+        assert!(!state.scrubbing());
     }
 }

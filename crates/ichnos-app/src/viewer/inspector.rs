@@ -260,8 +260,7 @@ impl Viewer {
                         div()
                             .id("call-title")
                             .mt_2()
-                            .max_h(px(84.))
-                            .overflow_y_scroll()
+                            .line_clamp(2)
                             .font_weight(FontWeight::MEDIUM)
                             .text_color(color(theme::BRIGHT))
                             .child(text),

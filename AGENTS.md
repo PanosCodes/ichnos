@@ -32,8 +32,11 @@ agents working in the repo; `README.md` is for users.
 ```sh
 mise run check     # fmt --check, clippy -D warnings, tests: the same as CI
 mise run app       # run the viewer from source
+mise run shots     # headless PNGs of every view, light and dark, narrow and wide, in ./shots
 ```
 
+After a view change, run `mise run shots [session-id]` and look at the PNGs (light and dark, 900 and
+1400 wide) before saying it is done; the shots need no screen access.
 Run `mise run check` before saying a change is done. CI runs the same three steps on macOS.
 
 ## Rust

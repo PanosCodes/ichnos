@@ -3,7 +3,10 @@
 //! overlay.
 
 use accesskit::{Role, Toggled};
+use gpui_kit::component::Sizable as _;
+use gpui_kit::component::button::Button;
 use gpui_kit::component::input::{self, Input};
+use gpui_kit::component::menu::{DropdownMenu as _, PopupMenuItem};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
     Context, FontWeight, InteractiveElement as _, IntoElement, MouseButton, ParentElement as _,
@@ -17,10 +20,13 @@ use crate::present::plural;
 use crate::theme::{self, MONO, color, color_alpha};
 use crate::view_state::{View, failed_calls};
 
+/// Window width, in pixels, below which the toolbar drops what it can do without.
+pub(super) const NARROW: f32 = 1100.;
+
 impl Viewer {
     pub(super) fn render_toolbar(
         &mut self,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let current = self
@@ -33,15 +39,21 @@ impl Viewer {
             .and_then(|s| i64::try_from(s.mtime_ms()).ok())
             .and_then(|ms| ichnos_core::local_time(ms, "%H:%M"))
             .unwrap_or_default();
-        let picker_label = self.session.as_ref().map_or_else(
-            || "no session".to_owned(),
-            |id| short_id(id.as_str()).to_owned(),
-        );
-        let picker_extra = [project.as_str(), when.as_str()]
-            .into_iter()
-            .filter(|part| !part.is_empty())
-            .fold(String::new(), |extra, part| extra + " · " + part);
+        let id = self.session.as_ref().map(|id| short_id(id.as_str()));
+        let picker_label = if project.is_empty() {
+            id.map_or("no session", |id| id).to_owned()
+        } else {
+            project.clone()
+        };
+        let picker_extra = [
+            id.filter(|_| !project.is_empty()).unwrap_or_default(),
+            when.as_str(),
+        ]
+        .into_iter()
+        .filter(|part| !part.is_empty())
+        .fold(String::new(), |extra, part| extra + " · " + part);
 
+        let narrow = f32::from(window.viewport_size().width) < NARROW;
         let errors = failed_calls(&self.model).len();
         let tree = self.state.view() == View::Tree;
         let panel_open = self.state.panel().is_open();
@@ -79,14 +91,17 @@ impl Viewer {
                     .text_color(color(theme::TEXT_2))
                     .whitespace_nowrap()
                     .cursor_pointer()
+                    .active(|s| s.opacity(0.7))
                     .hover(|s| {
                         s.text_color(color(theme::BRIGHT))
                             .border_color(color(theme::HOVER_LINE))
                     })
                     .on_click(cx.listener(|this, _, window, cx| this.toggle_switcher(window, cx)))
                     .child(picker_label)
-                    .child(div().text_color(color(theme::DIM)).child(picker_extra))
-                    .child(kbd("⌘K")),
+                    .when(!narrow, |d| {
+                        d.child(div().text_color(color(theme::DIM)).child(picker_extra))
+                            .child(kbd("⌘K"))
+                    }),
             )
             .child(
                 div()
@@ -121,17 +136,6 @@ impl Viewer {
                             .child(view.label())
                     })),
             )
-            .when(tree, |d| {
-                d.child(
-                    toggle("model-steps", "Model steps", show_model).on_click(cx.listener(
-                        move |this, _, _, cx| {
-                            this.state.set_show_model(!show_model);
-                            this.refresh();
-                            cx.notify();
-                        },
-                    )),
-                )
-            })
             .child(
                 div()
                     .flex()
@@ -192,54 +196,51 @@ impl Viewer {
                         .on_click(cx.listener(|this, _, window, cx| {
                             this.on_next_error(&super::NextError, window, cx);
                         }))
-                        .child(format!("{} · next ↓", plural(errors, "error"))),
+                        .child(if narrow {
+                            format!("{errors} ↓")
+                        } else {
+                            format!("{} · next ↓", plural(errors, "error"))
+                        }),
                 )
             })
             .when(tree, |d| {
+                let viewer = cx.entity().downgrade();
                 d.child(
-                    div()
-                        .flex()
-                        .flex_row()
-                        .flex_none()
-                        .border_1()
-                        .border_color(color(theme::LINE_2))
-                        .rounded(px(theme::R_CONTROL))
-                        .text_color(color(theme::BTN))
+                    Button::new("tree-options")
+                        .outline()
+                        .compact()
+                        .small()
                         .text_size(px(theme::FS_SMALL))
-                        .child(
-                            div()
-                                .id("expand")
-                                .role(Role::Button)
-                                .aria_label("Expand all")
-                                .px_2()
-                                .py_1()
-                                .cursor_pointer()
-                                .hover(|s| s.text_color(color(theme::BRIGHT)))
-                                .on_click(cx.listener(|this, _, _, cx| {
-                                    this.state.set_all_open(&this.model, true);
-                                    this.refresh();
-                                    cx.notify();
-                                }))
-                                .child("Expand"),
-                        )
-                        .child(
-                            div()
-                                .id("collapse")
-                                .role(Role::Button)
-                                .aria_label("Collapse all")
-                                .px_2()
-                                .py_1()
-                                .border_l_1()
-                                .border_color(color(theme::LINE_2))
-                                .cursor_pointer()
-                                .hover(|s| s.text_color(color(theme::BRIGHT)))
-                                .on_click(cx.listener(|this, _, _, cx| {
-                                    this.state.set_all_open(&this.model, false);
-                                    this.refresh();
-                                    cx.notify();
-                                }))
-                                .child("Collapse"),
-                        ),
+                        .label("Options")
+                        .accessibility_label("Tree options")
+                        .dropdown_caret(true)
+                        .dropdown_menu(move |menu, _, _| {
+                            let (steps, open, shut) =
+                                (viewer.clone(), viewer.clone(), viewer.clone());
+                            menu.item(
+                                PopupMenuItem::new("Model steps")
+                                    .checked(show_model)
+                                    .on_click(move |_, _, cx| {
+                                        steps
+                                            .update(cx, |this, cx| {
+                                                this.state.set_show_model(!show_model);
+                                                this.refresh();
+                                                cx.notify();
+                                            })
+                                            .ok();
+                                    }),
+                            )
+                            .item(PopupMenuItem::separator())
+                            .item(PopupMenuItem::new("Expand all").on_click(move |_, _, cx| {
+                                open.update(cx, |this, cx| this.set_all_open(true, cx)).ok();
+                            }))
+                            .item(
+                                PopupMenuItem::new("Collapse all").on_click(move |_, _, cx| {
+                                    shut.update(cx, |this, cx| this.set_all_open(false, cx))
+                                        .ok();
+                                }),
+                            )
+                        }),
                 )
             })
             .child(
@@ -290,7 +291,7 @@ impl Viewer {
             )
     }
 
-    pub(super) fn render_stats(&self) -> impl IntoElement {
+    pub(super) fn render_stats(&self, narrow: bool) -> impl IntoElement {
         let bar = div()
             .flex()
             .flex_row()
@@ -343,11 +344,13 @@ impl Viewer {
             tokens(stats.output_tokens),
             tokens(input)
         ))
-        .child(div().ml_auto().text_color(color(theme::FG)).child(format!(
-            "model {} · tools {}",
-            duration(stats.model_ms),
-            duration(tool_ms)
-        )))
+        .when(!narrow, |d| {
+            d.child(div().ml_auto().text_color(color(theme::FG)).child(format!(
+                "model {} · tools {}",
+                duration(stats.model_ms),
+                duration(tool_ms)
+            )))
+        })
     }
 
     /// The keyboard shortcuts overlay; a click outside the card or Esc closes it.
@@ -486,6 +489,7 @@ impl Viewer {
 pub(super) fn toggle(
     id: &'static str,
     label: &'static str,
+    text: &'static str,
     on: bool,
 ) -> gpui_kit::Stateful<gpui_kit::Div> {
     div()
@@ -504,6 +508,7 @@ pub(super) fn toggle(
         .whitespace_nowrap()
         .text_size(px(theme::FS_SMALL))
         .cursor_pointer()
+        .active(|s| s.opacity(0.7))
         .when_else(
             on,
             |d| {
@@ -518,7 +523,7 @@ pub(super) fn toggle(
             },
         )
         .child(if on { "✓" } else { "○" })
-        .child(label)
+        .child(text)
 }
 
 /// A square toolbar button showing `glyph`, named `label` for assistive tech.
@@ -542,6 +547,7 @@ pub(super) fn icon_button(
         .rounded(px(theme::R_CONTROL))
         .text_color(color(theme::MUTED))
         .cursor_pointer()
+        .active(|s| s.opacity(0.7))
         .hover(|s| {
             s.text_color(color(theme::BRIGHT))
                 .border_color(color(theme::HOVER_LINE))
