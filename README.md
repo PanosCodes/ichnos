@@ -28,8 +28,9 @@ mise install
 mise run install
 ```
 
-This puts `ichnos` (the hook and CLI) and `ichnos-app` (the viewer) in `~/.cargo/bin`. Claude
-Code runs `ichnos` by name, so that folder must be on your `PATH`:
+This puts `ichnos` (the hook and CLI) and `ichnos-app` (the viewer) in `~/.cargo/bin`. On macOS
+the viewer itself goes into `~/Applications/Ichnos.app`, which gives it its icon in the Dock, and
+`~/.cargo/bin/ichnos-app` links to it. Claude Code runs `ichnos` by name, so that folder must be on your `PATH`:
 
 ```sh
 echo 'export PATH="$HOME/.cargo/bin:$PATH"' >> ~/.zshrc

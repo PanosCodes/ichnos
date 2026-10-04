@@ -187,11 +187,13 @@ fn start_app(dir: &Path, socket: &Path, args: OpenArgs<'_>) -> Result<(), OpenEr
 }
 
 /// The app's executable: next to this one when installed together, else from `PATH`.
+///
+/// On macOS the installed one is a symlink into `Ichnos.app`; it is resolved because macOS only
+/// gives the app its bundle's name and icon when started from the path inside the bundle.
 fn app_exe() -> PathBuf {
     std::env::current_exe()
         .ok()
-        .map(|exe| exe.with_file_name(APP_EXE))
-        .filter(|exe| exe.exists())
+        .and_then(|exe| std::fs::canonicalize(exe.with_file_name(APP_EXE)).ok())
         .unwrap_or_else(|| PathBuf::from(APP_EXE))
 }
 
