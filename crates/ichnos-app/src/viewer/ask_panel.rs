@@ -89,7 +89,7 @@ impl Viewer {
         div()
             .id("ask-panel")
             .absolute()
-            .top(px(48.))
+            .top(px(88.))
             .right(px(12.))
             .w(px(560.))
             .max_h(px(640.))

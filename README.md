@@ -58,9 +58,11 @@ Only one viewer runs at a time; `ichnos open` brings the running one forward.
 
 ## Using the viewer
 
+- **Appearance** follows macOS: light or dark, switching live.
 - **Tree** is the main view: one row per prompt you sent, with its outcome, tokens and time.
   Expand a row to see its tool calls and model steps; Skill calls show the skill name as a tag.
-  A subagent's work sits under the call that started it.
+  A subagent's work sits under the call that started it. The **Options** menu shows or hides
+  model steps and expands or collapses every row.
 - **Inspector** (right side) shows the selected row's input and output, the calls around it, and
   a **Replay from here** button. Its other tabs show what was running at that moment, the todo
   list, files read and changed, and token use; the line under the tabs says which moment they
@@ -70,8 +72,8 @@ Only one viewer runs at a time; `ichnos open` brings the running one forward.
 - **Table** lists every event; Skill calls show the skill name as a tag.
 - **Filter** by typing words, or `is:error`, `is:running`, `tool:Bash`, `agent:Explore`,
   `file:feed.rs`.
-- **Replay** with the strip under the toolbar: hover a tick to see what it was, click anywhere to
-  replay from there, press `space` to play or `←` / `→` to step. `▶|` goes back to live. The
+- **Replay** with the strip under the toolbar: hover a tick to see what it was, click or drag
+  anywhere to replay from there, press `space` to play or `←` / `→` to step. `▶|` goes back to live. The
   strip's right end shows whether you're live, and toggles **Follow newest** (switch to each new
   session) and **Auto-scroll** (keep the newest row in sight).
 - **Sessions** (`⌘K` / `Ctrl+K`) lets you search all sessions by first prompt, folder or id.

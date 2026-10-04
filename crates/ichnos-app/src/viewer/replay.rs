@@ -11,7 +11,7 @@ use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
     Bounds, Context, FontWeight, Hsla, InteractiveElement as _, IntoElement, MouseButton,
     MouseDownEvent, MouseMoveEvent, ParentElement as _, Pixels, StatefulInteractiveElement as _,
-    Styled as _, canvas, deferred, div, fill, point, px, relative, size,
+    Styled as _, Window, canvas, deferred, div, fill, point, px, relative, size,
 };
 use ichnos_model::call::{Key, key_of};
 use ichnos_model::labels::{clock, duration, label};
@@ -24,6 +24,12 @@ use crate::view_state::{View, nearest_tick};
 
 /// How far, in pixels, the pointer may be from a tick and still hover it.
 const HOVER_REACH: f32 = 6.;
+
+/// The least distance, in pixels, between two numbered turn markers.
+const MARK_GAP: f32 = 24.;
+
+/// Window width, in pixels, below which the live toggles use their short names.
+const WIDE: f32 = 1500.;
 
 /// What a tick on the strip stands for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -60,7 +66,11 @@ impl TickKind {
 }
 
 impl Viewer {
-    pub(super) fn render_replay(&self, cx: &mut Context<Self>) -> impl IntoElement {
+    pub(super) fn render_replay(
+        &self,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
         let bounds = self.bounds;
         let replay_at = self.state.replay_at();
         let span = bounds.map_or(1, |b| (b.t1 - b.t0).max(1));
@@ -126,6 +136,18 @@ impl Viewer {
         } else {
             Vec::new()
         };
+        let width = self.strip.get().map_or(600., |b| f32::from(b.size.width));
+        let mut last = f32::NEG_INFINITY;
+        let marks: Vec<(f32, usize, bool)> = marks
+            .into_iter()
+            .map(|(at, n)| {
+                let show = (at - last) * width >= MARK_GAP && at < 0.96;
+                if show {
+                    last = at;
+                }
+                (at, n, show)
+            })
+            .collect();
         let label = match (bounds, replay_at) {
             (None, _) => "—".to_owned(),
             (Some(b), Some(at)) => format!("{} · +{}", clock(at), duration(at - b.t0)),
@@ -134,6 +156,7 @@ impl Viewer {
 
         let strip_bounds: Rc<Cell<Bounds<Pixels>>> = Rc::default();
         let measured = Rc::clone(&strip_bounds);
+        let shared = Rc::clone(&self.strip);
         let button = |id: &'static str, label: &'static str, text: &'static str| {
             div()
                 .id(id)
@@ -145,6 +168,7 @@ impl Viewer {
                 .border_color(color(theme::LINE_2))
                 .rounded(px(theme::R_CONTROL))
                 .cursor_pointer()
+                .active(|s| s.opacity(0.7))
                 .hover(|s| {
                     s.text_color(color(theme::BRIGHT))
                         .border_color(color(theme::HOVER_LINE))
@@ -197,6 +221,7 @@ impl Viewer {
             .child(
                 div()
                     .id("strip")
+                    .min_w_0()
                     .role(Role::Slider)
                     .aria_label("Replay position")
                     .aria_value(label.clone())
@@ -223,26 +248,17 @@ impl Viewer {
                     }))
                     .on_mouse_down(
                         MouseButton::Left,
-                        cx.listener(move |this, event: &MouseDownEvent, _, cx| {
-                            let Some(b) = this.bounds else {
-                                return;
-                            };
-                            let rail = strip_bounds.get();
-                            let width = f32::from(rail.size.width).max(1.);
-                            let x =
-                                (f32::from(event.position.x - rail.origin.x) / width).clamp(0., 1.);
-                            #[expect(
-                                clippy::cast_possible_truncation,
-                                clippy::cast_precision_loss,
-                                reason = "a pixel fraction of a millisecond span"
-                            )]
-                            let ms = b.t0 + (x * (b.t1 - b.t0) as f32).round() as i64;
-                            this.seek(ms, cx);
+                        cx.listener(|this, event: &MouseDownEvent, _, cx| {
+                            this.state.set_scrubbing(true);
+                            this.scrub_to(f32::from(event.position.x), cx);
                         }),
                     )
                     .child(
                         canvas(
-                            move |bounds, _, _| measured.set(bounds),
+                            move |bounds, _, _| {
+                                measured.set(bounds);
+                                shared.set(Some(bounds));
+                            },
                             move |bounds, (), window, _| {
                                 let rail = Bounds::new(
                                     point(bounds.origin.x, bounds.origin.y + px(10.)),
@@ -280,7 +296,7 @@ impl Viewer {
                         .absolute()
                         .size_full(),
                     )
-                    .children(marks.into_iter().map(|(at, n)| {
+                    .children(marks.into_iter().map(|(at, n, show)| {
                         div()
                             .absolute()
                             .top_0()
@@ -294,9 +310,10 @@ impl Viewer {
                                     .left(px(3.))
                                     .top(px(-1.))
                                     .font_family(MONO)
+                                    .whitespace_nowrap()
                                     .text_size(px(theme::FS_SMALL))
                                     .text_color(color(theme::MUTED))
-                                    .child(n.to_string()),
+                                    .when(show, |d| d.child(n.to_string())),
                             )
                     }))
                     .when_some(hovered, |d, (at, text)| d.child(tooltip(at, text))),
@@ -314,11 +331,11 @@ impl Viewer {
                     }))
                     .child(label),
             )
-            .child(self.render_live(cx))
+            .child(self.render_live(f32::from(window.viewport_size().width) < WIDE, cx))
     }
 
     /// The connection pill and the follow and auto-scroll toggles.
-    fn render_live(&self, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render_live(&self, narrow: bool, cx: &mut Context<Self>) -> impl IntoElement {
         let (pill_background, pill_color, pill_dot, pill_text) = if self.state.replay_at().is_some()
         {
             (theme::SEL, theme::BLUE_TEXT, theme::BLUE, "Replay")
@@ -358,28 +375,39 @@ impl Viewer {
                     .child(pill_text),
             )
             .child(
-                toggle("follow", "Follow newest", follow)
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        if follow {
-                            this.follow_newest = false;
-                            cx.notify();
-                        } else {
-                            this.open_session(None, None, cx);
-                        }
-                    }))
-                    .test_support(),
+                toggle(
+                    "follow",
+                    "Follow newest",
+                    if narrow { "Follow" } else { "Follow newest" },
+                    follow,
+                )
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    if follow {
+                        this.follow_newest = false;
+                        cx.notify();
+                    } else {
+                        this.open_session(None, None, cx);
+                    }
+                }))
+                .test_support(),
             )
             .when(self.state.view() != View::Graph, |d| {
-                d.child(toggle("tail", "Auto-scroll", tail).on_click(cx.listener(
-                    move |this, _, _, cx| {
+                d.child(
+                    toggle(
+                        "tail",
+                        "Auto-scroll",
+                        if narrow { "Scroll" } else { "Auto-scroll" },
+                        tail,
+                    )
+                    .on_click(cx.listener(move |this, _, _, cx| {
                         this.state.set_tail(!tail);
                         if !tail {
                             this.tree_scroll.scroll_to_bottom();
                             this.table_scroll.scroll_to_bottom();
                         }
                         cx.notify();
-                    },
-                )))
+                    })),
+                )
             })
     }
 

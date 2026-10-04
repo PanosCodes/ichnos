@@ -892,7 +892,7 @@ fn u(pixels: f32) -> Rems {
 const BASE_REM: f32 = 16.;
 
 /// A right-aligned mono number column that scales with the graph.
-fn numeric(width: f32, text: u32) -> gpui_kit::Div {
+fn numeric(width: f32, text: crate::theme::Tok) -> gpui_kit::Div {
     div()
         .w(u(width))
         .flex_none()

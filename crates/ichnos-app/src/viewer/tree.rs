@@ -117,8 +117,6 @@ impl Viewer {
             .h(px(ROW_HEIGHT))
             .pl(px(indent))
             .pr(px(14.))
-            .border_b_1()
-            .border_color(color(theme::ROW_LINE))
             .cursor_pointer()
             .when(err, |d| d.bg(color(theme::RED_BG)))
             .when(!err && in_agent, |d| d.bg(color(theme::SUB_BG)))
@@ -325,8 +323,11 @@ impl Viewer {
             }))
             .cursor_pointer()
             .when(open, |d| d.bg(color(theme::TURN_OPEN)))
+            // One border color covers every side, so the selected row loses its divider
+            // rather than get a blue underline.
             .when(selected, |d| {
                 d.bg(color(theme::SEL))
+                    .border_b_0()
                     .border_l_2()
                     .border_color(color(theme::BLUE))
             })
@@ -441,7 +442,7 @@ impl TreeRow {
 }
 
 /// A right-aligned mono number column.
-pub(super) fn numeric(width: f32, text: u32) -> gpui_kit::Div {
+pub(super) fn numeric(width: f32, text: crate::theme::Tok) -> gpui_kit::Div {
     div()
         .w(px(width))
         .flex_none()

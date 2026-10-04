@@ -23,6 +23,11 @@ serde_json.workspace = true
 thiserror.workspace = true
 tokio = { workspace = true, features = ["io-util", "macros", "process", "rt", "rt-multi-thread", "sync", "time"] }
 
+[features]
+# `ICHNOS_SHOTS=<dir> cargo run -p ichnos-app --features screenshots -- <session>` renders the
+# viewer headlessly into PNGs, to look at it without a screen.
+screenshots = ["gpui-kit/test-support"]
+
 [lints]
 workspace = true
 

@@ -13,6 +13,8 @@
 mod live;
 mod llm;
 mod present;
+#[cfg(feature = "screenshots")]
+mod shots;
 mod summarizer;
 mod summary_host;
 mod theme;
@@ -26,7 +28,6 @@ use std::process::ExitCode;
 
 use crate::llm::Llm;
 use clap::Parser;
-use gpui_kit::component::theme::{Theme, ThemeMode};
 use gpui_kit::{AppContext as _, Bounds, TitlebarOptions, WindowBounds, WindowOptions, px, size};
 use ichnos_core::instance::{self, Command, Listener};
 use ichnos_core::store::SessionId;
@@ -84,6 +85,11 @@ fn main() -> ExitCode {
         eprintln!("could not create {}: {err}", sessions_dir.display());
         return ExitCode::FAILURE;
     }
+    #[cfg(feature = "screenshots")]
+    if let Some(out) = std::env::var_os("ICHNOS_SHOTS") {
+        shots::run(out.as_ref(), &data_dir, cli.session.as_ref());
+        return ExitCode::SUCCESS;
+    }
     // One app per data directory: a second launch hands its request to the first.
     let socket = instance::socket_path(&data_dir);
     let listener = match Listener::bind(&socket) {
@@ -140,7 +146,7 @@ fn main() -> ExitCode {
 
     gpui_kit::application().run(move |cx| {
         gpui_kit::init(cx);
-        Theme::change(ThemeMode::Dark, None, cx);
+        theme::apply_appearance(cx.window_appearance(), cx);
         viewer::bind_keys(cx);
         let bounds = Bounds::centered(None, size(px(1400.), px(900.)), cx);
         let window = gpui_kit::open_window(

@@ -13,6 +13,10 @@ run = [
 description = "Run the viewer from source"
 run = "cargo run -p ichnos-app"
 
+[tasks.shots]
+description = "Render every view, light and dark, narrow and wide, to PNGs in ./shots (pass a session id to pick one)"
+run = "ICHNOS_SHOTS=shots cargo run -p ichnos-app --features screenshots --"
+
 [tasks.check]
 description = "Format check, lint and test everything"
 run = [
