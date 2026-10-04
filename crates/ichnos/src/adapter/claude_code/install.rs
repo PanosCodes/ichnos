@@ -1,9 +1,12 @@
 //! Adds the `ichnos hook` entries from `hooks.json` to a Claude Code settings file, or removes them,
-//! together with the `ichnos` skill that lets agents query the logs.
+//! together with the `ichnos` skill that lets agents query the logs and the `ichnos` plugin that
+//! asks the model for its own account of each turn when a debug profile is set.
 //!
 //! Only entries that run `ichnos hook` are touched; every other setting and hook is kept, in
 //! its original order. Installing twice leaves one copy, so `install` also updates an older one.
-//! The skill goes next to the settings file, in `skills/ichnos/SKILL.md`.
+//! The skill goes next to the settings file, in `skills/ichnos/SKILL.md`; the plugin in
+//! `ichnos-plugin/`, which the settings' `env.CLAUDE_CODE_PLUGIN_DIRS` names so Claude Code loads
+//! it. Claude Code reads that variable from the user settings file only.
 
 use std::fs;
 use std::io;
@@ -21,6 +24,41 @@ const SKILL_MD: &str = include_str!("../../../../../skill/SKILL.md");
 
 /// Folder of the skill, inside the `skills` folder next to the settings file.
 const SKILL_DIR: &str = "ichnos";
+
+/// The Claude Code plugin's files, by their path inside its folder; compiled in like the skill.
+const PLUGIN_FILES: [(&str, &str); 6] = [
+    (
+        ".claude-plugin/plugin.json",
+        include_str!("../../../../../plugin/.claude-plugin/plugin.json"),
+    ),
+    (
+        "hooks/hooks.json",
+        include_str!("../../../../../plugin/hooks/hooks.json"),
+    ),
+    (
+        "hooks/register.ts",
+        include_str!("../../../../../plugin/hooks/register.ts"),
+    ),
+    (
+        "hooks/account.ts",
+        include_str!("../../../../../plugin/hooks/account.ts"),
+    ),
+    (
+        "hooks/validate.ts",
+        include_str!("../../../../../plugin/hooks/validate.ts"),
+    ),
+    (
+        "hooks/profiles.ts",
+        include_str!("../../../../../plugin/hooks/profiles.ts"),
+    ),
+];
+
+/// Folder of the plugin, next to the settings file.
+const PLUGIN_DIR: &str = "ichnos-plugin";
+
+/// The settings `env` variable listing the plugin folders Claude Code loads, separated like
+/// `PATH`.
+const PLUGIN_DIRS_VAR: &str = "CLAUDE_CODE_PLUGIN_DIRS";
 
 /// Why the settings file was left unchanged.
 #[derive(Debug, Error)]
@@ -72,9 +110,13 @@ impl Change {
 pub fn install(path: &Path) -> Result<Change, InstallError> {
     let mut settings = read_settings(path)?.unwrap_or_else(|| Value::Object(Map::new()));
     let before = settings.clone();
+    let plugin = plugin_path(path);
     add_hooks(&mut settings).map_err(|what| shape_error(path, what))?;
+    add_plugin_dir(&mut settings, &plugin).map_err(|what| shape_error(path, what))?;
     let hooks = write_if_changed(path, &before, &settings)?;
-    Ok(hooks.or(write_skill(&skill_path(path))?))
+    Ok(hooks
+        .or(write_skill(&skill_path(path))?)
+        .or(write_plugin(&plugin)?))
 }
 
 /// Remove the ichnos hooks from the settings file at `path`, if it exists, and the skill.
@@ -83,13 +125,15 @@ pub fn install(path: &Path) -> Result<Change, InstallError> {
 ///
 /// Returns an [`InstallError`] when the settings or the skill can't be read, parsed or written.
 pub fn uninstall(path: &Path) -> Result<Change, InstallError> {
-    let skill = remove_skill(&skill_path(path))?;
+    let plugin = plugin_path(path);
+    let files = remove_skill(&skill_path(path))?.or(remove_plugin(&plugin)?);
     let Some(mut settings) = read_settings(path)? else {
-        return Ok(skill);
+        return Ok(files);
     };
     let before = settings.clone();
     remove_hooks(&mut settings).map_err(|what| shape_error(path, what))?;
-    Ok(write_if_changed(path, &before, &settings)?.or(skill))
+    remove_plugin_dir(&mut settings, &plugin).map_err(|what| shape_error(path, what))?;
+    Ok(write_if_changed(path, &before, &settings)?.or(files))
 }
 
 /// Where the skill goes for the settings file at `settings`: `<its folder>/skills/ichnos/SKILL.md`.
@@ -100,6 +144,141 @@ pub fn skill_path(settings: &Path) -> PathBuf {
         .join("skills")
         .join(SKILL_DIR)
         .join("SKILL.md")
+}
+
+/// Where the plugin goes for the settings file at `settings`: `<its folder>/ichnos-plugin`, made
+/// absolute, since Claude Code takes the folder from an environment variable.
+pub fn plugin_path(settings: &Path) -> PathBuf {
+    let dir = settings
+        .parent()
+        .unwrap_or_else(|| Path::new(""))
+        .join(PLUGIN_DIR);
+    std::path::absolute(&dir).unwrap_or(dir)
+}
+
+/// Write [`PLUGIN_FILES`] into the folder `dir`, leaving files that are already up to date, and
+/// delete the files in its `hooks` folder that an older version left and this one doesn't ship.
+fn write_plugin(dir: &Path) -> Result<Change, InstallError> {
+    let mut change = Change::Unchanged;
+    for (name, contents) in PLUGIN_FILES {
+        let path = dir.join(name);
+        if fs::read_to_string(&path).is_ok_and(|text| text == contents) {
+            continue;
+        }
+        let write_error = |source| InstallError::Write {
+            path: path.clone(),
+            source,
+        };
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).map_err(write_error)?;
+        }
+        fs::write(&path, contents).map_err(write_error)?;
+        change = Change::Updated;
+    }
+    Ok(change.or(remove_stale_hooks(&dir.join("hooks"))?))
+}
+
+/// Delete the files in the plugin's `hooks` folder that aren't in [`PLUGIN_FILES`]. Claude Code
+/// loads only what `hooks.json` names, so a leftover is harmless, but it hides which version runs.
+fn remove_stale_hooks(hooks: &Path) -> Result<Change, InstallError> {
+    let read_error = |source| InstallError::Read {
+        path: hooks.to_owned(),
+        source,
+    };
+    let mut change = Change::Unchanged;
+    for entry in fs::read_dir(hooks).map_err(read_error)? {
+        let path = entry.map_err(read_error)?.path();
+        let shipped = path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .is_some_and(|name| {
+                PLUGIN_FILES
+                    .iter()
+                    .any(|(shipped, _)| shipped.strip_prefix("hooks/") == Some(name))
+            });
+        if shipped || !path.is_file() {
+            continue;
+        }
+        fs::remove_file(&path).map_err(|source| InstallError::Write {
+            path: path.clone(),
+            source,
+        })?;
+        change = Change::Updated;
+    }
+    Ok(change)
+}
+
+/// Delete the plugin folder `dir`, with what Claude Code wrote into it (its types), if it holds
+/// the `ichnos` plugin. A folder holding anything else is left alone.
+fn remove_plugin(dir: &Path) -> Result<Change, InstallError> {
+    let manifest = dir.join(PLUGIN_FILES[0].0);
+    let is_ours = fs::read_to_string(&manifest)
+        .ok()
+        .and_then(|text| serde_json::from_str::<Value>(&text).ok())
+        .is_some_and(|manifest| manifest["name"] == "ichnos");
+    if !is_ours {
+        return Ok(Change::Unchanged);
+    }
+    fs::remove_dir_all(dir).map_err(|source| InstallError::Write {
+        path: dir.to_owned(),
+        source,
+    })?;
+    Ok(Change::Updated)
+}
+
+/// Add `dir` to the settings' `env.CLAUDE_CODE_PLUGIN_DIRS`, keeping the folders already there.
+fn add_plugin_dir(settings: &mut Value, dir: &Path) -> Result<(), String> {
+    let env = object_entry(settings, "env")?;
+    let mut dirs = plugin_dirs(env)?;
+    if !dirs.iter().any(|known| known == dir) {
+        dirs.push(dir.to_owned());
+    }
+    let joined = std::env::join_paths(&dirs).map_err(|_| format!("`env.{PLUGIN_DIRS_VAR}`"))?;
+    env.insert(
+        PLUGIN_DIRS_VAR.to_owned(),
+        Value::String(joined.to_string_lossy().into_owned()),
+    );
+    Ok(())
+}
+
+/// Remove `dir` from the settings' `env.CLAUDE_CODE_PLUGIN_DIRS`, then the variable and `env`
+/// if that emptied them.
+fn remove_plugin_dir(settings: &mut Value, dir: &Path) -> Result<(), String> {
+    let Value::Object(root) = settings else {
+        return Err("the settings".into());
+    };
+    let Some(Value::Object(env)) = root.get_mut("env") else {
+        return Ok(());
+    };
+    let dirs = plugin_dirs(env)?;
+    if !dirs.iter().any(|known| known == dir) {
+        return Ok(());
+    }
+    let kept: Vec<_> = dirs.into_iter().filter(|known| known != dir).collect();
+    if kept.is_empty() {
+        env.shift_remove(PLUGIN_DIRS_VAR);
+    } else {
+        let joined = std::env::join_paths(&kept).map_err(|_| format!("`env.{PLUGIN_DIRS_VAR}`"))?;
+        env.insert(
+            PLUGIN_DIRS_VAR.to_owned(),
+            Value::String(joined.to_string_lossy().into_owned()),
+        );
+    }
+    if env.is_empty() {
+        root.shift_remove("env");
+    }
+    Ok(())
+}
+
+/// The folders in `env.CLAUDE_CODE_PLUGIN_DIRS`, none when it is missing.
+fn plugin_dirs(env: &Map<String, Value>) -> Result<Vec<PathBuf>, String> {
+    match env.get(PLUGIN_DIRS_VAR) {
+        None => Ok(Vec::new()),
+        Some(Value::String(dirs)) => Ok(std::env::split_paths(dirs)
+            .filter(|dir| !dir.as_os_str().is_empty())
+            .collect()),
+        Some(_) => Err(format!("`env.{PLUGIN_DIRS_VAR}` to be text, and")),
+    }
 }
 
 /// Write [`SKILL_MD`] to `path` unless it is already there.
@@ -316,7 +495,7 @@ mod tests {
         );
         assert_eq!(settings["hooks"]["PreToolUse"][0]["matcher"], "*");
         let keys: Vec<_> = settings.as_object().unwrap().keys().collect();
-        assert_eq!(keys, ["model", "hooks"]);
+        assert_eq!(keys, ["model", "hooks", "env"]);
     }
 
     #[test]
@@ -327,7 +506,9 @@ mod tests {
         assert_eq!(install(&path).unwrap(), Change::Updated);
 
         let settings: Value = serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
-        let wanted: Value = serde_json::from_str(HOOKS_JSON).unwrap();
+        let mut wanted: Value = serde_json::from_str(HOOKS_JSON).unwrap();
+        let plugin = plugin_path(&path).to_string_lossy().into_owned();
+        wanted["env"] = json!({ PLUGIN_DIRS_VAR: plugin });
         assert_eq!(settings, wanted);
     }
 
@@ -411,6 +592,84 @@ mod tests {
             dir.path().join(".claude/skills").exists(),
             "other skills' folder is kept"
         );
+    }
+
+    #[test]
+    fn the_plugin_is_installed_next_to_the_settings_and_named_in_its_env() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings.json");
+        let other = "/opt/other-plugin";
+        fs::write(
+            &path,
+            json!({ "env": { PLUGIN_DIRS_VAR: other, "FOO": "1" } }).to_string(),
+        )
+        .unwrap();
+        let plugin = plugin_path(&path);
+        assert!(plugin.is_absolute());
+
+        install(&path).unwrap();
+        for (name, contents) in PLUGIN_FILES {
+            assert_eq!(
+                fs::read_to_string(plugin.join(name)).unwrap(),
+                contents,
+                "{name}"
+            );
+        }
+        let settings: Value = serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+        let expected = std::env::join_paths([Path::new(other), &plugin]).unwrap();
+        assert_eq!(
+            settings["env"][PLUGIN_DIRS_VAR],
+            json!(expected.to_str().unwrap())
+        );
+        assert_eq!(install(&path).unwrap(), Change::Unchanged, "named once");
+
+        fs::create_dir_all(plugin.join(".claude-plugin/types")).unwrap();
+        uninstall(&path).unwrap();
+        assert!(
+            !plugin.exists(),
+            "removed with what Claude Code wrote into it"
+        );
+        let settings: Value = serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(
+            settings["env"],
+            json!({ PLUGIN_DIRS_VAR: other, "FOO": "1" })
+        );
+    }
+
+    #[test]
+    fn install_deletes_hook_files_an_older_version_left() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings.json");
+        let plugin = plugin_path(&path);
+        fs::create_dir_all(plugin.join("hooks")).unwrap();
+        fs::create_dir_all(plugin.join(".claude-plugin/types")).unwrap();
+        fs::write(plugin.join("hooks/register.tsx"), "old").unwrap();
+        fs::write(plugin.join(".claude-plugin/types/tsconfig.json"), "{}").unwrap();
+
+        install(&path).unwrap();
+        assert!(!plugin.join("hooks/register.tsx").exists());
+        assert!(plugin.join("hooks/register.ts").exists());
+        assert!(
+            plugin.join(".claude-plugin/types/tsconfig.json").exists(),
+            "what Claude Code wrote is kept"
+        );
+        assert_eq!(install(&path).unwrap(), Change::Unchanged);
+    }
+
+    #[test]
+    fn uninstall_leaves_a_plugin_folder_that_is_not_ichnos() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings.json");
+        let plugin = plugin_path(&path);
+        fs::create_dir_all(plugin.join(".claude-plugin")).unwrap();
+        fs::write(
+            plugin.join(".claude-plugin/plugin.json"),
+            r#"{"name": "mine"}"#,
+        )
+        .unwrap();
+
+        uninstall(&path).unwrap();
+        assert!(plugin.join(".claude-plugin/plugin.json").exists());
     }
 
     #[test]
