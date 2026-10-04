@@ -18,7 +18,9 @@ use crate::view_state::View;
 use crate::viewer::{Options, Viewer, bind_keys};
 
 /// States shot, besides the view as opened (see `Viewer::apply_shot`).
-const STATES: [&str; 7] = ["", "selected", "turn", "replay", "switcher", "ask", "help"];
+const STATES: [&str; 8] = [
+    "", "selected", "turn", "replay", "switcher", "ask", "help", "settings",
+];
 
 /// Window widths shot.
 const WIDTHS: [f32; 2] = [900., 1400.];
@@ -55,7 +57,7 @@ pub fn run(out: &Path, data_dir: &Path, session: Option<&SessionId>) {
                     search: None,
                     listener: None,
                 };
-                let (handle, viewer) = cx
+                let (mut handle, viewer) = cx
                     .update(|cx| {
                         gpui_kit::open_window(
                             WindowOptions {
@@ -79,7 +81,13 @@ pub fn run(out: &Path, data_dir: &Path, session: Option<&SessionId>) {
                     }
                 };
                 settle(&mut cx);
-                if !state.is_empty() {
+                if state == "settings" {
+                    // The settings window is its own window: shoot that one.
+                    handle = cx
+                        .update(|cx| crate::settings::open(&viewer, cx))
+                        .expect("open the settings window");
+                    settle(&mut cx);
+                } else if !state.is_empty() {
                     cx.update_window(handle, |_, window, cx| {
                         viewer.update(cx, |viewer, cx| viewer.apply_shot(state, window, cx));
                     })

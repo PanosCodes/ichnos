@@ -22,11 +22,11 @@ use gpui_kit::component::input::{InputEvent, InputState};
 use gpui_kit::component::menu::{ContextMenuExt as _, PopupMenuItem};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
-    AnyElement, App, AppContext as _, ClipboardItem, Context, Entity, FocusHandle, Focusable,
-    InteractiveElement as _, IntoElement, KeyBinding, MouseButton, MouseDownEvent, MouseMoveEvent,
-    MouseUpEvent, ParentElement as _, Render, ScrollStrategy, SharedString,
-    StatefulInteractiveElement as _, Styled as _, Subscription, UniformListScrollHandle, Window,
-    actions, div, px,
+    AnyElement, AnyWindowHandle, App, AppContext as _, ClipboardItem, Context, Entity, FocusHandle,
+    Focusable, InteractiveElement as _, IntoElement, KeyBinding, Menu, MenuItem, MouseButton,
+    MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement as _, Render, ScrollStrategy,
+    SharedString, StatefulInteractiveElement as _, Styled as _, Subscription,
+    UniformListScrollHandle, Window, actions, div, px,
 };
 use ichnos_core::catalog::{Catalog, SessionEntry};
 use ichnos_core::instance::{Command, Listener};
@@ -100,6 +100,8 @@ actions!(
         FocusFilter,
         /// Open or close the session switcher.
         ToggleSwitcher,
+        /// Open the settings window.
+        OpenSettings,
         /// Close the open overlay.
         Dismiss,
         /// Zoom the graph in.
@@ -132,6 +134,7 @@ pub fn bind_keys(cx: &mut App) {
         KeyBinding::new("g", ShowGraph, Some(SHORTCUTS)),
         KeyBinding::new("b", ShowTable, Some(SHORTCUTS)),
         KeyBinding::new("/", FocusFilter, Some(SHORTCUTS)),
+        KeyBinding::new("cmd-,", OpenSettings, Some(CONTEXT)),
         KeyBinding::new("escape", Dismiss, Some(SHORTCUTS)),
         KeyBinding::new("cmd-k", ToggleSwitcher, Some(CONTEXT)),
         KeyBinding::new("ctrl-k", ToggleSwitcher, Some(CONTEXT)),
@@ -141,7 +144,21 @@ pub fn bind_keys(cx: &mut App) {
         KeyBinding::new("cmd-0", ZoomReset, Some(SHORTCUTS)),
         KeyBinding::new("cmd-q", Quit, None),
     ]);
+    crate::settings::bind_keys(cx);
     cx.on_action(|_: &Quit, cx| cx.quit());
+}
+
+/// The app menu: "Settings…" opens the settings screen, and "Quit" leaves.
+pub fn set_menus(cx: &mut App) {
+    cx.set_menus([Menu {
+        name: "Ichnos".into(),
+        items: vec![
+            MenuItem::action("Settings…", OpenSettings),
+            MenuItem::separator(),
+            MenuItem::action("Quit Ichnos", Quit),
+        ],
+        disabled: false,
+    }]);
 }
 
 /// Where the viewer reads from and what it starts on.
@@ -209,6 +226,8 @@ pub struct Viewer {
     ask_focus: bool,
     /// Whether the keyboard shortcuts overlay is open.
     help: bool,
+    /// The settings window, once opened.
+    settings: Option<AnyWindowHandle>,
     subscriptions: Vec<Subscription>,
 }
 
@@ -305,6 +324,7 @@ impl Viewer {
             ask: None,
             ask_focus: false,
             help: false,
+            settings: None,
             subscriptions,
         };
         if let Some(session) = options.session {
@@ -680,6 +700,39 @@ impl Viewer {
         cx.notify();
     }
 
+    /// Bring the settings window forward, opening it the first time. Deferred until this update
+    /// ends: the new window draws at once, and its first draw reads the viewer.
+    fn open_settings(cx: &mut Context<Self>) {
+        let viewer = cx.entity();
+        cx.defer(move |cx| {
+            let open = viewer.read(cx).settings;
+            if let Some(window) = open
+                && window
+                    .update(cx, |_, window, _| window.activate_window())
+                    .is_ok()
+            {
+                return;
+            }
+            let window = crate::settings::open(&viewer, cx);
+            viewer.update(cx, |viewer, _| viewer.settings = window);
+        });
+    }
+
+    /// Whether the viewer switches to the newest session as one starts.
+    pub(crate) fn follows_newest(&self) -> bool {
+        self.follow_newest
+    }
+
+    /// Follow the newest session, or stay on the one shown.
+    pub(crate) fn set_follow_newest(&mut self, follow: bool, cx: &mut Context<Self>) {
+        if follow {
+            self.open_session(None, None, cx);
+        } else {
+            self.follow_newest = false;
+            cx.notify();
+        }
+    }
+
     fn toggle_play(&mut self, cx: &mut Context<Self>) {
         self.state.toggle_play(self.bounds);
         self.refresh();
@@ -962,6 +1015,7 @@ impl Render for Viewer {
             .on_action(cx.listener(|this, _: &StepForward, _, cx| this.step(true, cx)))
             .on_action(cx.listener(|this, _: &TogglePanel, _, cx| this.toggle_panel(cx)))
             .on_action(cx.listener(|this, _: &ToggleHelp, _, cx| this.toggle_help(cx)))
+            .on_action(cx.listener(|_, _: &OpenSettings, _, cx| Self::open_settings(cx)))
             .on_action(cx.listener(|this, _: &ShowTree, _, cx| this.set_view(View::Tree, cx)))
             .on_action(cx.listener(|this, _: &ShowGraph, _, cx| this.set_view(View::Graph, cx)))
             .on_action(cx.listener(|this, _: &ShowTable, _, cx| this.set_view(View::Table, cx)))
