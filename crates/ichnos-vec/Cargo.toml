@@ -1,0 +1,22 @@
+[package]
+name = "ichnos-vec"
+description = "Registers the sqlite-vec extension with rusqlite; the only Ichnos crate allowed `unsafe`"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+rusqlite.workspace = true
+sqlite-vec = "0.1.9"
+
+# The workspace table, except `unsafe_code`: `forbid` can't be relaxed for one function, so this
+# crate uses `deny` and allows the single registration call.
+[lints.rust]
+unsafe_code = "deny"
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+unwrap_used = "warn"
+expect_used = "warn"
