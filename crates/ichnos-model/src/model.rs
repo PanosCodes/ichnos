@@ -240,6 +240,22 @@ impl Node {
         &self.kind
     }
 
+    /// The database row id of the event that names the node: a call's first event, a turn's
+    /// prompt (its `Stop` when it has none), a subagent's start or stop event. `None` for a
+    /// model step, which is made of several events.
+    #[must_use]
+    pub fn row_id(&self) -> Option<i64> {
+        let call = match &self.kind {
+            NodeKind::Turn { prompt, stop } => prompt.as_ref().or(stop.as_ref()),
+            NodeKind::Call { call, .. } | NodeKind::Event(call) => Some(call),
+            NodeKind::Agent(agent) | NodeKind::Note(agent) => {
+                agent.start_event().or(agent.stop_event())
+            }
+            NodeKind::Model(_) => None,
+        };
+        call.map(|call| call.first().row_id())
+    }
+
     /// The node it hangs under; `None` for a turn.
     #[must_use]
     pub fn parent(&self) -> Option<NodeId> {
@@ -1502,6 +1518,16 @@ pub(crate) mod tests {
             None,
             "the last turn is still going while live"
         );
+    }
+
+    #[test]
+    fn a_node_is_named_by_its_first_event_and_a_model_step_by_none() {
+        let events = [prompt(1, "do it"), bash(2, "t1"), post(3, "t1", &json!({}))];
+        let steps = [step("m1", 2, 2, &json!({}))];
+        let model = build_session(&data(&events, &steps), LIVE);
+        assert_eq!(model.node(model.turns()[0]).row_id(), Some(1));
+        assert_eq!(node(&model, "t1").row_id(), Some(2));
+        assert_eq!(node(&model, "m1").row_id(), None);
     }
 
     #[test]

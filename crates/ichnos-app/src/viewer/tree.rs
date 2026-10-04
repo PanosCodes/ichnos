@@ -102,7 +102,8 @@ impl Viewer {
         let indent = 14. + (node.depth().saturating_sub(1)) as f32 * 20.;
         let toggle_key = key.clone();
 
-        div()
+        let row_id = node.row_id();
+        let row = div()
             .id(("row", row.id_index()))
             .role(Role::Button)
             .aria_label(format!("{}: {}", label.chip, one_line(&label.text)))
@@ -244,8 +245,8 @@ impl Viewer {
                         ),
                 )
             })
-            .test_support()
-            .into_any_element()
+            .test_support();
+        Viewer::with_row_menu(row, node.key().clone(), row_id, cx)
     }
 
     fn render_turn_row(
@@ -302,7 +303,8 @@ impl Viewer {
         let id = row.id;
         let key = node.key().clone();
 
-        div()
+        let row_id = node.row_id();
+        let row = div()
             .id(("turn", row.id_index()))
             .role(Role::Button)
             .aria_label(format!("Turn: {}", one_line(&label.text)))
@@ -426,8 +428,8 @@ impl Viewer {
                     ),
                 )
             })
-            .test_support()
-            .into_any_element()
+            .test_support();
+        Viewer::with_row_menu(row, node.key().clone(), row_id, cx)
     }
 }
 
