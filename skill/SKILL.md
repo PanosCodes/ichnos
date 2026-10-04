@@ -1,12 +1,13 @@
 ---
 name: ichnos
-description: Query Ichnos's logs of Claude Code sessions with SQL. Use when asked what happened in a Claude Code session (this one or an earlier one), why a tool call failed, which files a session changed, what a subagent did, how long things took, or to compare sessions.
+description: Query Ichnos's logs of coding-agent sessions (Claude Code and others) with SQL. Use when asked what happened in an agent session (this one or an earlier one), to find which past session worked on something, why a tool call failed, which files a session changed, what a subagent did, how long things took, or to compare sessions.
 ---
 
 # Ichnos logs
 
-Ichnos records every Claude Code session it is installed for: prompts, tool calls with their
-input, output, errors and durations, subagents, and the reply that ended each turn. Each session
+Ichnos records every agent session it is installed for: prompts, tool calls with their
+input, output, errors and durations, subagents, the model's text between calls, and the reply
+that ended each turn. Each session
 is one SQLite file. Query it with `sqlite3` and answer from the rows; cite event ids so the user
 can find them in the viewer.
 
@@ -26,6 +27,39 @@ for db in $(ls -t ~/.ichnos/sessions/*.db); do
   echo "$db $(sqlite3 "$db" "SELECT (SELECT record->>'\$.extra.cwd' FROM events WHERE record->>'\$.extra.cwd' IS NOT NULL LIMIT 1) || '  ' || count(*) || ' events' FROM events")"
 done
 ```
+
+## Finding sessions about something: the index
+
+When you don't know which session it was ("when did I fix the login bug?"), search the index
+instead of opening every database. `~/.ichnos/index.db` (or `$ICHNOS_DIR/index.db`) holds, for
+every session, each prompt, each failed call's error and each one-line summary:
+
+```sql
+docs(
+  id         INTEGER PRIMARY KEY,
+  session_id TEXT,     -- the session; its database is sessions/<session_id>.db
+  event_id   INTEGER,  -- the events.id in that session's database the text belongs to
+  kind       TEXT,     -- prompt | error | summary
+  text       TEXT      -- one line, at most 500 characters
+)
+```
+
+```sh
+sqlite3 -json ~/.ichnos/index.db "
+  SELECT session_id, count(*) AS hits, max(substr(text, 1, 150)) AS sample
+  FROM docs WHERE text LIKE '%login%' AND text LIKE '%token%'
+  GROUP BY session_id ORDER BY hits DESC LIMIT 10"
+```
+
+Then open the session's database and drill in from `event_id`. Try a few wordings, since
+summaries paraphrase: search for `oauth` as well as `login`.
+
+- The viewer builds the index while it runs. A session ends up in it a few seconds after it
+  changes, and only while the viewer is open. Summaries only exist for sessions someone viewed.
+  When the index is missing or a session isn't in it, fall back to the session databases.
+- Query `docs` only. The `vectors` table needs the `sqlite-vec` extension, so `sqlite3` fails
+  on it with "no such module: vec0".
+- The same rules as below apply: `SELECT` only, and always `LIMIT`.
 
 ## How to query
 
