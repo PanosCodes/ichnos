@@ -2,10 +2,11 @@
 rust = "stable"
 
 [tasks.install]
-description = "Build and install ichnos and ichnos-app into ~/.cargo/bin"
+description = "Build and install ichnos and ichnos-app into ~/.cargo/bin, and Ichnos.app on macOS"
 run = [
-  "cargo install --path crates/ichnos",
-  "cargo install --path crates/ichnos-app",
+  "cargo install --locked --path crates/ichnos",
+  "cargo install --locked --path crates/ichnos-app",
+  "if [ \"$(uname)\" = Darwin ]; then crates/ichnos-app/macos/bundle.sh; fi",
 ]
 
 [tasks.app]
