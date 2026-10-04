@@ -3,10 +3,12 @@
 
 use std::collections::{HashMap, HashSet};
 
+use ichnos_core::store::SessionId;
 use ichnos_model::call::{Call, Key};
 use ichnos_model::filter::Filter;
 use ichnos_model::labels::Summaries;
 use ichnos_model::model::{Bounds, NodeId, NodeKind, SessionModel};
+use ichnos_search::SessionMatch;
 
 pub use ichnos_core::instance::View;
 
@@ -629,6 +631,20 @@ impl Pan {
     }
 }
 
+/// The meaning matches a switcher lists after its word matches: those whose session is in
+/// `known` (its database still exists) and not already in `listed`, in their order.
+pub fn related_matches(
+    related: &[SessionMatch],
+    listed: &[&SessionId],
+    known: &[&SessionId],
+) -> Vec<SessionMatch> {
+    related
+        .iter()
+        .filter(|found| known.contains(&&found.session) && !listed.contains(&&found.session))
+        .cloned()
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use ichnos_core::event::Event;
@@ -847,5 +863,22 @@ mod tests {
         pan.reset_zoom();
         assert!((pan.zoom() - 1.).abs() < f32::EPSILON);
         assert!((pan.offset().0 - 10.).abs() < 1e-4 && (pan.offset().1 + 20.).abs() < 1e-4);
+    }
+
+    #[test]
+    fn related_matches_skip_listed_and_deleted_sessions() {
+        let id = |text: &str| -> SessionId { text.parse().unwrap() };
+        let found = |session: &str| SessionMatch {
+            session: id(session),
+            event_id: 1,
+            kind: ichnos_search::DocKind::Summary,
+            text: session.to_owned(),
+            distance: 0.1,
+        };
+        let (a, b, c) = (id("a"), id("b"), id("c"));
+        let related = [found("a"), found("gone"), found("c"), found("b")];
+        let kept = related_matches(&related, &[&a], &[&a, &b, &c]);
+        let sessions: Vec<&str> = kept.iter().map(|found| found.session.as_str()).collect();
+        assert_eq!(sessions, ["c", "b"]);
     }
 }

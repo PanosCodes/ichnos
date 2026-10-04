@@ -1,8 +1,9 @@
-//! `ichnos-app`: Ichnos's native viewer. Shows a Claude Code session as a live timeline,
-//! reading the session databases the `ichnos` hook writes.
+//! `ichnos-app`: Ichnos's native viewer. Shows a coding agent's session as a live timeline,
+//! reading the session databases that `ichnos log` and `ichnos hook` write.
 //!
 //! `ichnos open` starts it; it can also be run directly:
-//! `ichnos-app [<session>] [--view tree|graph|table] [--dir <dir>] [--no-summaries]`.
+//! `ichnos-app [<session>] [--view tree|graph|table] [--dir <dir>] [--no-summaries] [--no-search]
+//! [--summarizer <command>]`.
 
 #![expect(
     clippy::too_many_lines,
@@ -23,11 +24,13 @@ use std::io;
 use std::path::PathBuf;
 use std::process::ExitCode;
 
+use crate::llm::Llm;
 use clap::Parser;
 use gpui_kit::component::theme::{Theme, ThemeMode};
 use gpui_kit::{AppContext as _, Bounds, TitlebarOptions, WindowBounds, WindowOptions, px, size};
 use ichnos_core::instance::{self, Command, Listener};
 use ichnos_core::store::SessionId;
+use ichnos_search::Search;
 
 use crate::summary_host::SummaryHost;
 use crate::view_state::View;
@@ -57,9 +60,17 @@ struct Cli {
     /// Data directory; sessions are in `<dir>/sessions` [default: ~/.ichnos].
     #[arg(long, env = "ICHNOS_DIR")]
     dir: Option<PathBuf>,
-    /// Don't ask Haiku to summarize entries.
+    /// Don't summarize entries.
     #[arg(long)]
     no_summaries: bool,
+    /// Command line that writes the one-line summaries: it gets the prompt on stdin and the
+    /// instructions in `$ICHNOS_SYSTEM_PROMPT`, and prints the reply [default: Haiku through
+    /// `claude -p`].
+    #[arg(long, env = "ICHNOS_SUMMARIZER")]
+    summarizer: Option<String>,
+    /// Don't index sessions for search by meaning in the session switcher.
+    #[arg(long)]
+    no_search: bool,
 }
 
 fn main() -> ExitCode {
@@ -95,6 +106,17 @@ fn main() -> ExitCode {
             None
         }
     };
+    let search = if cli.no_search {
+        None
+    } else {
+        match Search::start(sessions_dir.clone(), data_dir.clone()) {
+            Ok(search) => Some(search),
+            Err(err) => {
+                eprintln!("search by meaning is off: {err}");
+                None
+            }
+        }
+    };
     let summaries = if cli.no_summaries {
         None
     } else {
@@ -112,6 +134,7 @@ fn main() -> ExitCode {
         session: cli.session,
         view: cli.view,
         summaries,
+        search,
         listener,
     };
 

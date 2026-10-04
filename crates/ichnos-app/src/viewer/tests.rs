@@ -71,6 +71,7 @@ fn open(cx: &mut TestAppContext, data_dir: &Path) -> (Entity<Viewer>, VisualTest
         session: Some("s1".parse().unwrap()),
         view: View::Tree,
         summaries: None,
+        search: None,
         listener: None,
     };
     let (viewer, visual) = cx.add_window_view(|window, cx| Viewer::new(options, window, cx));

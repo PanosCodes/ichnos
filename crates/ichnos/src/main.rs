@@ -46,14 +46,34 @@ struct Cli {
 
 #[derive(Debug, Subcommand)]
 enum Command {
-    /// Read one hook event from stdin and store it. Always exits 0.
+    /// Read Ichnos events, one JSON object per line, from stdin and store them. Always exits 0.
     ///
     /// A new session also opens the viewer on it, like `ichnos open <session>`, unless the
     /// viewer is already running.
-    Hook {
+    Log {
         /// Don't open the viewer when a session starts.
         #[arg(long, env = "ICHNOS_NO_OPEN", value_parser = clap::builder::FalseyValueParser::new())]
         no_open: bool,
+    },
+    /// Read one hook payload of an agent from stdin, translate it and store it. Always exits 0.
+    ///
+    /// A new session also opens the viewer on it, like `ichnos log`.
+    Hook {
+        /// The agent that sent the payload.
+        #[arg(value_enum, default_value_t)]
+        adapter: Adapter,
+        /// Don't open the viewer when a session starts.
+        #[arg(long, env = "ICHNOS_NO_OPEN", value_parser = clap::builder::FalseyValueParser::new())]
+        no_open: bool,
+    },
+    /// Log the parts of a recorded session an adapter can still find, such as Claude Code's
+    /// model messages for sessions recorded before Ichnos logged them.
+    Import {
+        /// The agent that recorded the session.
+        #[arg(value_enum)]
+        adapter: Adapter,
+        /// The session to complete.
+        session: SessionId,
     },
     /// Show the viewer app, starting `ichnos-app` in the background if it isn't running.
     Open {
@@ -68,17 +88,30 @@ enum Command {
         /// Start the viewer without the one-line Haiku summaries.
         #[arg(long)]
         no_summaries: bool,
+        /// Start the viewer without search by meaning in the session switcher.
+        #[arg(long)]
+        no_search: bool,
+        /// Command line that writes the one-line summaries (prompt on stdin, reply on stdout)
+        /// [default: `claude -p --model haiku …`].
+        #[arg(long, env = "ICHNOS_SUMMARIZER")]
+        summarizer: Option<String>,
     },
     /// Quit the viewer app.
     Stop,
-    /// Add the ichnos hooks to Claude Code's settings, so new sessions are logged, and the skill
+    /// Add the ichnos hooks to an agent's settings, so new sessions are logged, and the skill
     /// that lets agents query the logs.
     Install {
+        /// The agent to wire up.
+        #[arg(value_enum, default_value_t)]
+        adapter: Adapter,
         #[command(flatten)]
         target: SettingsTarget,
     },
     /// Remove the ichnos hooks and skill. Recorded sessions are kept.
     Uninstall {
+        /// The agent to unwire.
+        #[arg(value_enum, default_value_t)]
+        adapter: Adapter,
         #[command(flatten)]
         target: SettingsTarget,
     },
@@ -117,7 +150,7 @@ fn main() -> ExitCode {
         Ok(cli) => cli,
         // Exit code 2 from a PreToolUse hook would block the tool call, so a misconfigured
         // hook command (e.g. an unknown flag) still exits 0.
-        Err(err) if std::env::args().any(|arg| arg == "hook") => {
+        Err(err) if std::env::args().any(|arg| arg == "hook" || arg == "log") => {
             eprintln!("{err}");
             return ExitCode::SUCCESS;
         }
@@ -143,31 +176,41 @@ fn main() -> ExitCode {
     if let Err(err) = fs::create_dir_all(&sessions_dir) {
         // A hook still exits 0; there is nowhere to log the failure.
         eprintln!("could not create {}: {err}", sessions_dir.display());
-        return if matches!(command, Command::Hook { .. }) {
+        return if matches!(command, Command::Hook { .. } | Command::Log { .. }) {
             ExitCode::SUCCESS
         } else {
             ExitCode::FAILURE
         };
     }
     match command {
-        Command::Hook { no_open } => {
-            // Never break the agent loop: failures go to the error log and the hook exits 0.
-            match hook::run(&sessions_dir, std::io::stdin().lock()) {
-                Ok(hook::Logged::SessionStarted(session)) if !no_open => {
-                    if let Err(err) = open::spawn(&dir, &session, &dir.join(ERROR_LOG)) {
-                        error_log::append(&dir, &format!("{err:?}"));
-                    }
-                }
-                Ok(_) => {}
-                Err(err) => error_log::append(&dir, &format!("{err:?}")),
-            }
+        Command::Log { no_open } => {
+            log_stdin(&dir, &sessions_dir, no_open);
             ExitCode::SUCCESS
         }
+        Command::Hook { adapter, no_open } => {
+            hook(&dir, &sessions_dir, adapter, no_open);
+            ExitCode::SUCCESS
+        }
+        Command::Import {
+            adapter: Adapter::ClaudeCode,
+            session,
+        } => match claude_code::import(&mut Logger::new(&sessions_dir), &session) {
+            Ok(count) => {
+                println!("Logged {count} model messages of session {session}");
+                ExitCode::SUCCESS
+            }
+            Err(err) => {
+                eprintln!("{}", error_chain(&err));
+                ExitCode::FAILURE
+            }
+        },
         Command::Open {
             session,
             view,
             unless_open,
             no_summaries,
+            no_search,
+            summarizer,
         } => match open::run(
             &dir,
             open::OpenArgs {
@@ -175,6 +218,8 @@ fn main() -> ExitCode {
                 view,
                 unless_open,
                 no_summaries,
+                no_search,
+                summarizer: summarizer.as_deref(),
             },
         ) {
             Ok(open::Opened::Shown) => {
