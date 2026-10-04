@@ -20,6 +20,7 @@ use serde::Serialize;
 use serde_json::{Map, Value, json};
 use thiserror::Error;
 
+use crate::debug;
 use crate::event::MAIN_AGENT;
 use crate::store::{NewEvent, SessionId, Store, StoreError};
 
@@ -196,7 +197,7 @@ fn build_record(event: &Map<String, Value>, now: DateTime<Utc>) -> Record {
         None if agent_id.is_none() => json!(MAIN_AGENT),
         None => Value::Null,
     };
-    let extra = match event.get("extra") {
+    let mut extra = match event.get("extra") {
         Some(Value::Object(extra)) => extra
             .iter()
             .map(|(key, value)| (key.clone(), clip(value)))
@@ -208,6 +209,7 @@ fn build_record(event: &Map<String, Value>, now: DateTime<Utc>) -> Record {
         .filter(|(key, _)| !NAMED_FIELDS.contains(&key.as_str()))
         .map(|(key, value)| (key.clone(), value.clone()))
         .collect();
+    expand_debug(&mut extra);
     let raw = |key: &str| event.get(key).cloned().unwrap_or(Value::Null);
     let field = |key: &str| event.get(key).map_or(Value::Null, clip);
 
@@ -228,6 +230,23 @@ fn build_record(event: &Map<String, Value>, now: DateTime<Utc>) -> Record {
         prompt: field("prompt"),
         extra,
         rest,
+    }
+}
+
+/// Expands an account in the compact form in `extra.debug` (a `Debug` event) to the full form,
+/// or marks it invalid with what broke it.
+fn expand_debug(extra: &mut Map<String, Value>) {
+    if let Some(account) = extra.get_mut("debug")
+        && account.get("v").and_then(Value::as_u64) == Some(debug::compact::VERSION)
+    {
+        *account = match debug::compact::expand(account) {
+            Ok(full) => full,
+            Err(error) => json!({
+                "invalid": true,
+                "raw": account.to_string().chars().take(500).collect::<String>(),
+                "error": error,
+            }),
+        };
     }
 }
 
@@ -355,6 +374,32 @@ mod tests {
         assert_eq!(lines[0]["ts"], json!("1970-01-01T00:00:01.000+00:00"));
         assert_eq!(lines[0]["texts"], json!(["hi"]));
         assert_eq!(lines[0]["message_id"], json!("m1"));
+    }
+
+    #[test]
+    fn a_compact_account_in_a_debug_event_is_stored_expanded() {
+        let dir = tempfile::tempdir().unwrap();
+        let account = json!({"v": 2, "o": {"s": "done", "r": ["docs"], "u": [], "k": []}});
+        log_all(
+            dir.path(),
+            &[
+                json!({"event": "Debug", "session_id": "s1", "extra": {"turn_id": "t1", "debug": account}}),
+                json!({"event": "Debug", "session_id": "s1", "extra": {"debug": {"v": 2, "o": {"s": "maybe"}}}}),
+            ],
+        );
+        let lines = logged(dir.path(), "s1");
+        assert_eq!(
+            lines[0]["extra"]["debug"],
+            json!({"v": 1, "outcome": {"state": "done", "remaining": ["docs"], "unverified_claims": [], "risks": []}})
+        );
+        assert_eq!(lines[0]["extra"]["turn_id"], json!("t1"));
+        assert_eq!(lines[1]["extra"]["debug"]["invalid"], json!(true));
+        assert!(
+            lines[1]["extra"]["debug"]["error"]
+                .as_str()
+                .unwrap()
+                .contains("outcome.state")
+        );
     }
 
     #[test]

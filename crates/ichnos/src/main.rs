@@ -98,8 +98,8 @@ enum Command {
     },
     /// Quit the viewer app.
     Stop,
-    /// Add the ichnos hooks to an agent's settings, so new sessions are logged, and the skill
-    /// that lets agents query the logs.
+    /// Add the ichnos hooks to an agent's settings, so new sessions are logged, the skill that
+    /// lets agents query the logs, and the plugin that asks the model to account for its turns.
     Install {
         /// The agent to wire up.
         #[arg(value_enum, default_value_t)]
@@ -107,7 +107,7 @@ enum Command {
         #[command(flatten)]
         target: SettingsTarget,
     },
-    /// Remove the ichnos hooks and skill. Recorded sessions are kept.
+    /// Remove the ichnos hooks, skill and plugin. Recorded sessions are kept.
     Uninstall {
         /// The agent to unwire.
         #[arg(value_enum, default_value_t)]
@@ -352,22 +352,35 @@ fn change_settings(
     let shown = path.display();
     let skill = install::skill_path(&path);
     let skill = skill.display();
+    let plugin = install::plugin_path(&path);
+    let plugin = plugin.display();
     match (change(&path), installing) {
         (Ok(install::Change::Updated), true) => {
-            println!("Added the ichnos hooks to {shown} and the ichnos skill to {skill}.");
+            println!(
+                "Added the ichnos hooks to {shown}, the ichnos skill to {skill} and the ichnos plugin to {plugin}."
+            );
             println!(
                 "New Claude Code sessions will be logged and open in the viewer; agents can query the logs with the skill."
             );
+            println!(
+                "To have the model explain its turns, set \"Ichnos debug profile\" in Claude Code's /config."
+            );
         }
         (Ok(install::Change::Unchanged), true) => {
-            println!("The ichnos hooks are already in {shown} and the skill in {skill}.");
+            println!(
+                "The ichnos hooks are already in {shown}, the skill in {skill} and the plugin in {plugin}."
+            );
         }
         (Ok(install::Change::Updated), false) => {
-            println!("Removed the ichnos hooks from {shown} and the skill from {skill}.");
+            println!(
+                "Removed the ichnos hooks from {shown}, the skill from {skill} and the plugin from {plugin}."
+            );
             println!("New Claude Code sessions won't be logged; recorded ones stay in ~/.ichnos.");
         }
         (Ok(install::Change::Unchanged), false) => {
-            println!("There are no ichnos hooks in {shown} and no skill in {skill}.");
+            println!(
+                "There are no ichnos hooks in {shown}, no skill in {skill} and no plugin in {plugin}."
+            );
         }
         (Err(err), _) => {
             eprintln!("{}", error_chain(&err));

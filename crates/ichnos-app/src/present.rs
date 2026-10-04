@@ -1,6 +1,7 @@
 //! How nodes look in rows and the inspector: tone, icon, badge, status text and the sections
 //! of the Call tab. Pure; the views turn tones into colors.
 
+use ichnos_core::debug::DEBUG_EVENT;
 use ichnos_core::event::Status;
 use ichnos_model::call::Call;
 use ichnos_model::labels::{Summaries, text, tool_names_of, totals_line};
@@ -289,6 +290,10 @@ pub fn sections(node: &Node, model: &SessionModel, _summaries: &Summaries) -> Ve
             );
             add("Time", totals_line(node.totals()), SectionTone::Code);
         }
+        NodeKind::Event(call) if call.name() == DEBUG_EVENT => {
+            let account = call.extra("debug").cloned().unwrap_or_default();
+            add("Debug", debug_text(&account), SectionTone::Prose);
+        }
         NodeKind::Call { call, agent: None } | NodeKind::Event(call) => {
             if call.tool_use_id().is_some() {
                 add("Input", input_text(call.input()), SectionTone::Code);
@@ -310,6 +315,68 @@ pub fn sections(node: &Node, model: &SessionModel, _summaries: &Summaries) -> Ve
         }
     }
     out
+}
+
+/// The model's account of a turn as lines to read: a line per section, then one per entry it
+/// reported, indented. Empty when there is no account.
+pub fn debug_text(debug: &Value) -> String {
+    let Value::Object(sections) = debug else {
+        return String::new();
+    };
+    if sections.get("invalid") == Some(&Value::Bool(true)) {
+        let raw = sections.get("raw").map(text).unwrap_or_default();
+        return match sections.get("error").and_then(Value::as_str) {
+            Some(error) if raw.is_empty() => format!("The model gave no account ({error})."),
+            Some(error) => format!("The model's account didn't fit ({error}):\n{raw}"),
+            None => format!("The model's account isn't a JSON object:\n{raw}"),
+        };
+    }
+    let mut lines = Vec::new();
+    for (name, section) in sections.iter().filter(|(name, _)| *name != "v") {
+        let Value::Object(fields) = section else {
+            lines.push(format!("{}: {}", words(name), debug_item(section)));
+            continue;
+        };
+        let entries: Vec<String> = fields
+            .iter()
+            .flat_map(|(field, value)| match value {
+                Value::Array(items) => items
+                    .iter()
+                    .map(|item| format!("  {}: {}", words(field), debug_item(item)))
+                    .collect(),
+                other => vec![format!("  {}: {}", words(field), debug_item(other))],
+            })
+            .collect();
+        if entries.is_empty() {
+            lines.push(format!("{}: nothing to report", words(name)));
+        } else {
+            lines.push(words(name));
+            lines.extend(entries);
+        }
+    }
+    lines.join("\n")
+}
+
+/// One reported entry on a line: text as it is, an object's fields joined with ` · `.
+fn debug_item(value: &Value) -> String {
+    match value {
+        Value::String(text) => text.clone(),
+        Value::Array(items) => items.iter().map(debug_item).collect::<Vec<_>>().join(", "),
+        Value::Object(fields) => fields
+            .iter()
+            .map(|(key, value)| match value {
+                Value::Object(_) => format!("{} ({})", words(key), debug_item(value)),
+                _ => format!("{}: {}", words(key), debug_item(value)),
+            })
+            .collect::<Vec<_>>()
+            .join(" · "),
+        other => other.to_string(),
+    }
+}
+
+/// A JSON key as words: `skipped_steps` reads `skipped steps`.
+fn words(key: &str) -> String {
+    key.replace('_', " ")
 }
 
 #[cfg(test)]
@@ -344,6 +411,53 @@ mod tests {
             input_text(&json!({"file_path": "/a"})),
             "{\n  \"file_path\": \"/a\"\n}"
         );
+    }
+
+    #[test]
+    fn a_debug_block_reads_as_lines_per_section() {
+        let debug = json!({
+            "v": 1,
+            "skills": {
+                "considered": [{ "skill": "fixup", "loaded": false, "reason": "new behavior" }],
+                "skipped_steps": [],
+                "missing_guidance": [],
+                "unclear_instructions": []
+            },
+            "rules": { "conflicts": [] },
+            "outcome": { "state": "partial", "remaining": ["write docs"], "unverified_claims": [], "risks": [] }
+        });
+        assert_eq!(
+            debug_text(&debug),
+            "skills\n  considered: skill: fixup · loaded: false · reason: new behavior\n\
+             rules: nothing to report\n\
+             outcome\n  state: partial\n  remaining: write docs"
+        );
+    }
+
+    #[test]
+    fn a_debug_block_names_nested_sources_and_invalid_blocks() {
+        let conflict = json!({ "rules": { "conflicts": [{
+            "a": { "where": "AGENTS.md", "says": "test it" }, "followed": "a"
+        }] } });
+        assert_eq!(
+            debug_text(&conflict),
+            "rules\n  conflicts: a (where: AGENTS.md · says: test it) · followed: a"
+        );
+        assert_eq!(
+            debug_text(&json!({ "invalid": true, "raw": "{oops" })),
+            "The model's account isn't a JSON object:\n{oops"
+        );
+        assert_eq!(
+            debug_text(&json!({ "invalid": true, "raw": "{}", "error": "no JSON object" })),
+            "The model's account didn't fit (no JSON object):\n{}"
+        );
+        assert_eq!(
+            debug_text(
+                &json!({ "invalid": true, "raw": "", "error": "no reply: api-error (529, overloaded)" })
+            ),
+            "The model gave no account (no reply: api-error (529, overloaded))."
+        );
+        assert_eq!(debug_text(&Value::Null), "");
     }
 
     #[test]

@@ -92,7 +92,7 @@ summaries(event_id, summary)  -- one plain-English sentence per finished call,
 The file is the session (`sessions/<session-id>.db`); `record->>'session_id'` repeats its id.
 
 `event` is one of `SessionStart`, `UserPromptSubmit`, `PreToolUse`, `PostToolUse`,
-`PostToolUseFailure`, `SubagentStart`, `SubagentStop`, `Stop`, `AssistantMessage`.
+`PostToolUseFailure`, `SubagentStart`, `SubagentStop`, `Stop`, `AssistantMessage`, `Debug`.
 
 Fields of `record`:
 
@@ -107,6 +107,7 @@ Fields of `record`:
 | `extra.last_assistant_message` | the reply that ended the turn (`Stop`, `SubagentStop`) |
 | `extra.cwd`, `extra.source` | on lifecycle events |
 | `message_id`, `texts`, `thinking`, `tool_use_ids`, `usage`, `model` | on `AssistantMessage` |
+| `extra.debug`, `extra.turn_id` | on `Debug`: the model's own account of the turn it follows (`skills`, `rules`, `outcome`, …; see `docs/ichnos-debug.schema.json`), or `{"invalid": true, "raw": …, "error": …}` |
 
 A field longer than 8000 characters is stored as `{"truncated": true, "original_length": n,
 "head": "<first 8000 chars>"}`. Read such fields with

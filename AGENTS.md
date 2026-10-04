@@ -20,6 +20,12 @@ agents working in the repo; `README.md` is for users.
 - `crates/ichnos-search`: search by meaning. Embeds prompts, errors and summaries with
   `model2vec-rs` into a `sqlite-vec` index (`~/.ichnos/index.db`). Only the viewer uses it.
 - `crates/ichnos-vec`: registers `sqlite-vec` with SQLite. Nothing else lives here.
+- `plugin/`: the Claude Code plugin (TypeScript function hooks) that `ichnos install` writes
+  next to the settings file. When a debug profile is set, it forks the session after each turn,
+  asks for the model's account in the compact form, checks it and hands it to `ichnos log` as a
+  `Debug` event. `hooks/profiles.ts` (prompts and schemas) is written by `ichnos-core`'s tests
+  from `debug/compact.rs`; regenerate it with `ICHNOS_BLESS=1 cargo test -p ichnos-core debug`.
+  Test the plugin with `claude plugin test plugin`.
 
 ## Commands
 

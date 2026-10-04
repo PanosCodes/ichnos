@@ -11,48 +11,19 @@ Your logs stay on your machine, in `~/.ichnos`. Ichnos has no server and no acco
 work, such as the one-line summaries, runs through your own AI tools (by default your Claude Code
 login), and you can swap in another command or turn it off.
 
-## Getting started
+## Install
 
-### Requirements
-
-- macOS 11 or later. The viewer renders with Metal, and CI builds and tests on macOS only.
-- The Xcode command line tools.
-- [mise](https://mise.jdx.dev), which installs the right Rust version.
-
-### 1. Install
-
-From this folder:
+You need macOS 11+, the Xcode command line tools and [mise](https://mise.jdx.dev).
 
 ```sh
 mise install
-mise run install
+mise run install          # puts ichnos and the viewer in ~/.cargo/bin (keep that on your PATH)
+ichnos install            # adds the hooks to ~/.claude/settings.json
 ```
 
-This puts `ichnos` (the hook and CLI) and `ichnos-app` (the viewer) in `~/.cargo/bin`. On macOS
-the viewer itself goes into `~/Applications/Ichnos.app`, which gives it its icon in the Dock, and
-`~/.cargo/bin/ichnos-app` links to it. Claude Code runs `ichnos` by name, so that folder must be on your `PATH`:
-
-```sh
-echo 'export PATH="$HOME/.cargo/bin:$PATH"' >> ~/.zshrc
-```
-
-Run `mise run install` again whenever you pull changes.
-
-### 2. Turn on logging
-
-```sh
-ichnos install            # Claude Code, all projects (~/.claude/settings.json)
-ichnos install --project  # Claude Code, this project only (.claude/settings.local.json)
-```
-
-This adds Ichnos's hooks to your Claude Code settings, leaving the rest of the file untouched,
-and installs the `ichnos` skill next to it. Start a new Claude Code session and it gets logged.
-
-To turn logging off, run `ichnos uninstall` (add `--project` if you installed it that way).
-Your recorded sessions are kept.
-
-Sessions recorded before Ichnos logged the model's text can get it from their transcript:
-`ichnos import claude-code <session-id>`.
+Start a new Claude Code session and the viewer opens on it. Run `ichnos install --project` to
+log a single project instead, and `ichnos uninstall` to stop logging (your recorded sessions are
+kept). Run `mise run install` again after you pull.
 
 ### Other agents
 
@@ -140,6 +111,14 @@ like:
 - "Why did the last Bash call fail?"
 - "Which files did yesterday's session in this repo change?"
 - "What did the Explore subagent do?"
+
+## Debug profiles
+
+To find out where your skills or instructions fall short, pick an "Ichnos debug profile" in
+Claude Code's `/config` (`skills`, `task`, `env` or `full`). After each turn, the model explains
+in a hidden fork what it did and what it missed, and the answer shows up as a **debug** row. It
+costs an extra request per turn, so leave it `off` when you're not tuning anything. It only works
+with the all-projects install.
 
 ## Where the data lives
 

@@ -8,6 +8,7 @@
 //! viewer reads them back through `ichnos-model`'s feed and [`catalog::Catalog`].
 
 pub mod catalog;
+pub mod debug;
 pub mod error_log;
 pub mod event;
 pub mod instance;

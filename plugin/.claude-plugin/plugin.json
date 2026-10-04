@@ -1,0 +1,24 @@
+{
+  "name": "ichnos",
+  "version": "0.1.0",
+  "description": "Asks the model, after each turn, for its own account of the turn when a debug profile is set, and hands it to Ichnos",
+  "author": {
+    "name": "Panos Dalitsouris"
+  },
+  "license": "MIT",
+  "userConfig": {
+    "debug_profile": {
+      "type": "string",
+      "title": "Ichnos debug profile",
+      "description": "Which sections of its own account the model gives after each turn: off, skills, task, env or full",
+      "options": [
+        "off",
+        "skills",
+        "task",
+        "env",
+        "full"
+      ],
+      "default": "off"
+    }
+  }
+}
