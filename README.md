@@ -1,15 +1,13 @@
 # Ichnos
 
-Ichnos records everything a coding agent does (every prompt, tool call, subagent and model
-reply) and shows it as a live timeline in a native app. It works with Claude Code out of the box,
-and with anything else that can write Ichnos events.
+When Claude Code goes off and does forty things, you usually find out what happened by
+scrolling the terminal. Ichnos logs every prompt, tool call, subagent and reply instead, and
+shows them as a live timeline in a native Mac app. You can see where the time went and why
+something failed, and you can replay a session to look at any moment in it.
 
-> **Status:** early (0.1). The event format and the database schema may still change between
-> versions.
+Everything stays in `~/.ichnos` on your machine. There's no server and no account.
 
-Your logs stay on your machine, in `~/.ichnos`. Ichnos has no server and no account. Any AI
-work, such as the one-line summaries, runs through your own AI tools (by default your Claude Code
-login), and you can swap in another command or turn it off.
+It's early (0.1), so the log format may still change.
 
 ## Install
 
@@ -25,94 +23,19 @@ Start a new Claude Code session and the viewer opens on it. Run `ichnos install 
 log a single project instead, and `ichnos uninstall` to stop logging (your recorded sessions are
 kept). Run `mise run install` again after you pull.
 
-### Other agents
+## Usage
 
-Ichnos takes one input format. Anything that can print JSON (a plugin, a wrapper, your own loop
-calling a model API) pipes Ichnos events into `ichnos log`:
+The tree view has one row per prompt. Expand a row to see the tool calls and subagents under it,
+and select one to see its input and output on the right. Drag along the strip under the toolbar
+to replay the session to that point. `⌘K` switches sessions, and it also finds sessions that are
+related by meaning, not just by matching words. Press `?` for the rest of the shortcuts.
 
-```sh
-echo '{"event":"UserPromptSubmit","session_id":"demo-1","prompt":"hi"}' | ichnos log
-```
+Each step gets a one-line summary. Claude Haiku writes them by default, using your Claude Code
+login. In Settings (`⌘,`) you can use Apple's on-device model instead, or turn the summaries
+off.
 
-## Commands
-
-| Command | What it does |
-| --- | --- |
-| `ichnos open` | Open the viewer on the newest session |
-| `ichnos open <session-id>` | Open the viewer on one session |
-| `ichnos open --view graph` | Open the viewer on a view: `tree`, `graph` or `table` |
-| `ichnos stop` | Quit the viewer |
-| `ichnos log` | Store Ichnos events read from stdin, one JSON object per line |
-| `ichnos hook claude-code` | Store one Claude Code hook payload (what `ichnos install` wires up) |
-| `ichnos import claude-code <session-id>` | Add the model's text to an older session from its transcript |
-
-Only one viewer runs at a time; `ichnos open` brings the running one forward.
-
-| Setting | Effect |
-| --- | --- |
-| `ICHNOS_NO_OPEN=1` | New sessions don't open the viewer |
-| `ichnos open --no-summaries` | Start the viewer without the one-line summaries (see below) |
-| `ichnos open --no-search` | Start the viewer without search by meaning in the session switcher |
-| `ICHNOS_SUMMARIZER` / `ichnos open --summarizer '<command>'` | Write the summaries with another command (see below) |
-| `--settings <file>` | Make `install` / `uninstall` change a different settings file |
-
-## Using the viewer
-
-- **Appearance** follows macOS: light or dark, switching live.
-- **Tree** is the main view: one row per prompt you sent, with its outcome, tokens and time.
-  Expand a row to see its tool calls and model steps; Skill calls show the skill name as a tag.
-  A subagent's work sits under the call that started it. The **Options** menu shows or hides
-  model steps and expands or collapses every row.
-- **Inspector** (right side) shows the selected row's input and output, the calls around it, and
-  a **Replay from here** button. Its other tabs show what was running at that moment, the todo
-  list, files read and changed, and token use; the line under the tabs says which moment they
-  describe. `⌘\` hides and shows it.
-- **Graph** shows one card per agent with its tools and timings. Click a card to see its prompt
-  and result.
-- **Table** lists every event; Skill calls show the skill name as a tag.
-- **Filter** by typing words, or `is:error`, `is:running`, `tool:Bash`, `agent:Explore`,
-  `file:feed.rs`.
-- **Replay** with the strip under the toolbar: hover a tick to see what it was, click or drag
-  anywhere to replay from there, press `space` to play or `←` / `→` to step. `▶|` goes back to live. The
-  strip's right end shows whether you're live, and toggles **Follow newest** (switch to each new
-  session) and **Auto-scroll** (keep the newest row in sight).
-- **Sessions** (`⌘K` / `Ctrl+K`) lets you search all sessions by first prompt, folder or id.
-  Below those matches it lists **related** sessions: ones whose prompts, errors or summaries are
-  close in meaning to what you typed, even with different words. The model (~30 MB) downloads
-  once on first start, and everything stays on your machine. `ichnos open --no-search` turns it
-  off.
-- **Ask agent** builds a prompt you paste into your coding agent, so it can answer questions
-  about the session from the log.
-- **Summaries**: each step gets a plain-English one-liner. By default Claude Haiku writes it,
-  using your Claude Code login. Any command can take over: it gets the prompt on stdin and the
-  instructions in `$ICHNOS_SYSTEM_PROMPT`, and prints the reply. For example,
-  `ICHNOS_SUMMARIZER='llm -m gpt-4o-mini -s "$ICHNOS_SYSTEM_PROMPT"' ichnos open`.
-
-`ichnos open <session-id> --view graph` pins a session and picks the view.
-
-### Keyboard shortcuts
-
-| Key | Action |
-| --- | --- |
-| `j` / `k` | Move down / up |
-| `↵` | Expand row |
-| `e` | Jump to the next error |
-| `g` / `t` / `b` | Graph / tree / table |
-| `/` | Focus the filter |
-| `space` | Play / pause replay |
-| `←` / `→` | Step replay back / forward |
-| `⌘K` | Switch session |
-| `⌘\` | Hide / show the inspector |
-| `?` | Show all shortcuts |
-
-## Asking agents about sessions
-
-The `ichnos` skill teaches your agent where the logs are and how to query them. Ask things
-like:
-
-- "Why did the last Bash call fail?"
-- "Which files did yesterday's session in this repo change?"
-- "What did the Explore subagent do?"
+`ichnos install` also adds a skill, so you can ask your agent things like "why did the last Bash
+call fail?" or "which files did yesterday's session change?".
 
 ## Debug profiles
 
@@ -122,25 +45,24 @@ in a hidden fork what it did and what it missed, and the answer shows up as a **
 costs an extra request per turn, so leave it `off` when you're not tuning anything. It only works
 with the all-projects install.
 
-## Where the data lives
+## Other agents
 
-```
-~/.ichnos/
-  sessions/<session-id>.db   # one SQLite file per session
-  index.db                   # search index for related sessions; safe to delete, it is rebuilt
-  hook-errors.log            # hook, log, summarizer and search errors (they never block the agent)
-  app.log                    # the viewer's log when `ichnos open` started it
-  app.sock                   # how `ichnos open` reaches the running viewer
-```
-
-Delete session files you don't need. The tables are described in
-[`crates/ichnos-core/schema.sql`](crates/ichnos-core/schema.sql), and you can query
-them directly. For example, which tools took the most time:
+Anything that can print JSON can feed Ichnos:
 
 ```sh
-sqlite3 ~/.ichnos/sessions/<session-id>.db "
-  SELECT record->>'tool_name' AS tool, count(*), sum(record->>'duration_ms') AS total_ms
-  FROM events WHERE event LIKE 'PostToolUse%' GROUP BY tool ORDER BY total_ms DESC"
+echo '{"event":"UserPromptSubmit","session_id":"demo-1","prompt":"hi"}' | ichnos log
+```
+
+## Data
+
+Each session is a SQLite file in `~/.ichnos/sessions/`, so you can delete old ones or query them
+directly ([schema](crates/ichnos-core/schema.sql)). If something goes wrong, look in
+`~/.ichnos/hook-errors.log`. Hook errors never block the agent.
+
+```sh
+sqlite3 ~/.ichnos/sessions/<id>.db "
+  SELECT record->>'tool_name' AS tool, sum(record->>'duration_ms') AS ms
+  FROM events WHERE event LIKE 'PostToolUse%' GROUP BY tool ORDER BY ms DESC"
 ```
 
 ## Development

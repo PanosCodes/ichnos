@@ -17,8 +17,6 @@ use crate::llm::{Llm, LlmError};
 use ichnos_core::event::ASSISTANT_MESSAGE;
 use ichnos_core::store::{Row, SessionId, Store, StoreError};
 
-/// Entries sent to the model in one request.
-const BATCH_SIZE: usize = 12;
 /// Failed attempts after which an entry is left without a summary.
 const MAX_ATTEMPTS: u32 = 2;
 /// Characters of each field sent to the model; the rest is cut and its length noted.
@@ -56,6 +54,15 @@ pub enum SummarizeError {
     Join(#[from] tokio::task::JoinError),
 }
 
+/// A model the summarizer asks, with how many entries fit in one request.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SummaryModel {
+    /// The command that writes the sentences.
+    pub llm: Llm,
+    /// Entries sent in one request; a small on-device model needs a small batch.
+    pub batch_size: usize,
+}
+
 /// Handle to the background summarizer; clones share one worker.
 #[derive(Debug, Clone)]
 pub struct Summarizer {
@@ -67,7 +74,8 @@ struct Inner {
     /// The sessions folder holding one `<session-id>.db` per session.
     dir: PathBuf,
     error_log_dir: PathBuf,
-    llm: Llm,
+    /// The model asked from the next batch on; `None` pauses summarizing.
+    model: Mutex<Option<SummaryModel>>,
     /// Session -> number of open streams watching it.
     watchers: Mutex<HashMap<SessionId, usize>>,
 }
@@ -80,16 +88,17 @@ pub struct Watch {
 }
 
 impl Summarizer {
-    /// Start the worker on the current tokio runtime, asking `llm` for summaries and storing them
-    /// in each session's database inside the sessions folder `dir`. Failures go to
+    /// Start the worker on the current tokio runtime, asking `model` for summaries and storing
+    /// them in each session's database inside the sessions folder `dir`. With `model` `None` it
+    /// waits until [`Summarizer::set_model`] names one. Failures go to
     /// `<error_log_dir>/hook-errors.log`.
     #[must_use]
-    pub fn start(dir: PathBuf, error_log_dir: PathBuf, llm: Llm) -> Self {
+    pub fn start(dir: PathBuf, error_log_dir: PathBuf, model: Option<SummaryModel>) -> Self {
         let summarizer = Self {
             inner: Arc::new(Inner {
                 dir,
                 error_log_dir,
-                llm,
+                model: Mutex::new(model),
                 watchers: Mutex::new(HashMap::new()),
             }),
         };
@@ -107,6 +116,20 @@ impl Summarizer {
         }
     }
 
+    /// Ask `model` from the next batch on; `None` pauses summarizing. Entries the old model gave
+    /// up on are tried again.
+    pub fn set_model(&self, model: Option<SummaryModel>) {
+        *self.model() = model;
+    }
+
+    fn model(&self) -> std::sync::MutexGuard<'_, Option<SummaryModel>> {
+        // Replacing the value whole keeps it consistent, so a poisoned lock is still usable.
+        self.inner
+            .model
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+    }
+
     fn watchers(&self) -> std::sync::MutexGuard<'_, HashMap<SessionId, usize>> {
         // The map stays consistent even if a holder panicked, so a poisoned lock is still usable.
         self.inner
@@ -117,12 +140,22 @@ impl Summarizer {
 
     async fn run(self) {
         let mut attempts: HashMap<i64, u32> = HashMap::new();
+        let mut last: Option<SummaryModel> = None;
         loop {
+            // Cloned once per round, so a swap lands between requests, never in one.
+            let Some(model) = self.model().clone() else {
+                tokio::time::sleep(IDLE_PAUSE).await;
+                continue;
+            };
+            if last.as_ref() != Some(&model) {
+                attempts.clear();
+                last = Some(model.clone());
+            }
             let sessions: Vec<SessionId> = self.watchers().keys().cloned().collect();
             let mut worked = false;
             for session in sessions {
                 let db = session.db_path(&self.inner.dir);
-                match summarize_next_batch(&self.inner.llm, &db, &mut attempts).await {
+                match summarize_next_batch(&model, &db, &mut attempts).await {
                     Ok(did_work) => worked |= did_work,
                     // Keep the worker alive; the viewer just lacks summaries.
                     Err(err) => {
@@ -163,7 +196,7 @@ struct Entry {
 
 /// Summarize the newest batch of unsummarized entries; returns whether there was one.
 async fn summarize_next_batch(
-    llm: &Llm,
+    model: &SummaryModel,
     db: &Path,
     attempts: &mut HashMap<i64, u32>,
 ) -> Result<bool, SummarizeError> {
@@ -187,11 +220,11 @@ async fn summarize_next_batch(
     if todo.is_empty() {
         return Ok(false);
     }
-    let batch = &todo[todo.len().saturating_sub(BATCH_SIZE)..];
+    let batch = &todo[todo.len().saturating_sub(model.batch_size.max(1))..];
     let mut fail = |event_id: i64| *attempts.entry(event_id).or_insert(0) += 1;
 
     let fields: Vec<&Value> = batch.iter().map(|entry| &entry.fields).collect();
-    let replies = match ask(llm, &fields).await {
+    let replies = match ask(&model.llm, &fields).await {
         Ok(replies) => replies,
         Err(err) => {
             for entry in batch {
@@ -339,6 +372,46 @@ mod tests {
         let entry = json!({"key": "1", "tool": "Bash"});
         let reply = ask(&llm, &[&entry]).await.unwrap();
         assert_eq!(reply.get("1"), Some(&json!("Listed files.")));
+    }
+
+    #[tokio::test]
+    async fn a_paused_summarizer_starts_once_given_a_model() {
+        let dir = tempfile::tempdir().unwrap();
+        let session: SessionId = "s1".parse().unwrap();
+        let event_id = Store::open(&session.db_path(dir.path()))
+            .unwrap()
+            .add_event(&ichnos_core::store::NewEvent {
+                epoch_ms: 1,
+                event: "UserPromptSubmit",
+                tool_use_id: None,
+                json: r#"{"event":"UserPromptSubmit","prompt":"hi"}"#,
+            })
+            .unwrap();
+        let summaries = || {
+            Store::open(&session.db_path(dir.path()))
+                .unwrap()
+                .summarized_event_ids()
+                .unwrap()
+        };
+
+        let summarizer = Summarizer::start(dir.path().to_owned(), dir.path().to_owned(), None);
+        let _watch = summarizer.watch(session.clone());
+        tokio::time::sleep(IDLE_PAUSE + Duration::from_millis(200)).await;
+        assert!(summaries().is_empty());
+
+        summarizer.set_model(Some(SummaryModel {
+            llm: Llm::new(format!(
+                r#"cat >/dev/null; echo '{{"{event_id}": "Said hi."}}'"#
+            )),
+            batch_size: 1,
+        }));
+        for _ in 0..50 {
+            if summaries().contains(&event_id) {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+        panic!("no summary after the model was set");
     }
 
     #[test]

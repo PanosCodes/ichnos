@@ -5,8 +5,7 @@ use std::path::PathBuf;
 use std::sync::mpsc;
 use std::thread;
 
-use crate::llm::Llm;
-use crate::summarizer::{Summarizer, Watch};
+use crate::summarizer::{Summarizer, SummaryModel, Watch};
 use ichnos_core::store::SessionId;
 
 /// A handle to the summarizer thread; it runs until the app exits.
@@ -16,13 +15,17 @@ pub struct SummaryHost {
 }
 
 impl SummaryHost {
-    /// Start the summarizer for the session databases in `sessions_dir`, asking `llm` for the
-    /// sentences; failures go to `<data_dir>/hook-errors.log`.
+    /// Start the summarizer for the session databases in `sessions_dir`, asking `model` for the
+    /// sentences (none: paused); failures go to `<data_dir>/hook-errors.log`.
     ///
     /// # Errors
     ///
     /// Returns the [`io::Error`] when the thread or its runtime can't start.
-    pub fn start(sessions_dir: PathBuf, data_dir: PathBuf, llm: Llm) -> io::Result<Self> {
+    pub fn start(
+        sessions_dir: PathBuf,
+        data_dir: PathBuf,
+        model: Option<SummaryModel>,
+    ) -> io::Result<Self> {
         let (sender, receiver) = mpsc::channel();
         thread::Builder::new()
             .name("ichnos-summarizer".to_owned())
@@ -44,7 +47,7 @@ impl SummaryHost {
                     }
                 };
                 runtime.block_on(async move {
-                    let summarizer = Summarizer::start(sessions_dir, data_dir, llm);
+                    let summarizer = Summarizer::start(sessions_dir, data_dir, model);
                     if sender.send(summarizer).is_ok() {
                         std::future::pending::<()>().await;
                     }
@@ -54,6 +57,11 @@ impl SummaryHost {
             .recv()
             .map_err(|_| io::Error::other("the summarizer runtime did not start"))?;
         Ok(Self { summarizer })
+    }
+
+    /// Ask `model` from the next batch on; `None` pauses summarizing.
+    pub fn set_model(&self, model: Option<SummaryModel>) {
+        self.summarizer.set_model(model);
     }
 
     /// Summarize `session` until the returned guard is dropped.

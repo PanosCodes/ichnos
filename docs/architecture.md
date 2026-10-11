@@ -75,6 +75,7 @@ Everything lives in the data directory, `~/.ichnos` unless `--dir` or `ICHNOS_DI
 | --- | --- | --- | --- |
 | `sessions/<session-id>.db` | `ichnos` (events, adapter state), the app's summarizer (summaries) | the app, the `ichnos` skill's SQL queries | One session. |
 | `index.db` | the app's search indexer | the session switcher | Indexed text and vectors for every session. |
+| `settings.json` | the app's Settings window | the app at launch | Saved settings: the chosen summarizer. |
 | `app.sock` | the app (binds it) | `ichnos open` / `ichnos stop` | The single-instance socket. |
 | `hook-errors.log` | anything with nobody to tell | people | Failures in hooks and background workers. |
 
@@ -170,9 +171,16 @@ never shares an executor with GPUI.
 - It pairs tool events into entries like the viewer does, skips running calls and model messages,
   and sends the rest to the model in batches, newest first, so the live end fills in first.
 - The model is a shell command (`app/llm.rs`): prompt on stdin, system prompt in
-  `$ICHNOS_SYSTEM_PROMPT`, reply on stdout. The default is `claude -p --model haiku`;
-  `--summarizer` or `ICHNOS_SUMMARIZER` swap it, `--no-summaries` turns it off. Ichnos names no
-  model provider.
+  `$ICHNOS_SYSTEM_PROMPT`, reply on stdout, paired with a batch size (`SummaryModel`), since a
+  small on-device model holds fewer entries. The summarizer names no model provider.
+- The app's `summarizers.rs` lists the choices (Claude Code's `claude -p --model haiku`, Apple
+  Foundation Models' `fm respond`, Off) and checks which this Mac can run. The Settings window
+  picks one and `Summarizer::set_model` swaps it between batches; the choice is saved in
+  `settings.json`. `--summarizer` or `ICHNOS_SUMMARIZER` override it for one launch, and
+  `--no-summaries` turns the summarizer off.
+- An app started from the Dock gets only the system `PATH`, so `summarizers.rs` reads the
+  interactive login shell's `PATH` once (`$SHELL -ilc`) and passes it to the summarizer commands
+  and the availability check; `claude` is often added to `PATH` in `~/.zshrc`.
 - Sentences go into the session's `summaries` table, where the viewer's feed picks them up like
   any other new row.
 

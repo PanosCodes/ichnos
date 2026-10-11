@@ -41,7 +41,9 @@ use ichnos_search::Search;
 use self::ask_panel::AskPanel;
 use self::switcher::{Switcher, SwitcherEvent};
 use crate::live::{Connection, LiveSession};
+use crate::prefs::Prefs;
 use crate::present::pretty;
+use crate::summarizers::{Choice, Probe};
 use crate::summary_host::SummaryHost;
 use crate::theme::{self, color};
 use crate::view_state::{TableRow, TreeRow, View, ViewState, agent_reference};
@@ -172,6 +174,12 @@ pub struct Options {
     pub view: View,
     /// The summarizer, unless summaries are off.
     pub summaries: Option<SummaryHost>,
+    /// The summarizer chosen at launch.
+    pub summarizer: Choice,
+    /// The summarizers listed in Settings.
+    pub summarizers: Vec<Choice>,
+    /// Checks which summarizers this Mac can run.
+    pub probe: Probe,
     /// Search by meaning for the session switcher, unless it is off.
     pub search: Option<Search>,
     /// Requests from `ichnos open` and `ichnos stop`.
@@ -188,8 +196,12 @@ enum ToolSort {
 /// The viewer window's root view.
 pub struct Viewer {
     focus: FocusHandle,
+    data_dir: PathBuf,
     sessions_dir: PathBuf,
     summaries: Option<SummaryHost>,
+    summarizer: Choice,
+    summarizers: Vec<Choice>,
+    probe: Probe,
     search: Option<Search>,
     listener: Option<Listener>,
     catalog: Arc<Mutex<Catalog>>,
@@ -298,7 +310,11 @@ impl Viewer {
             focus: cx.focus_handle(),
             catalog: Arc::new(Mutex::new(Catalog::new(sessions_dir.clone()))),
             sessions_dir,
+            data_dir: options.data_dir,
             summaries: options.summaries,
+            summarizer: options.summarizer,
+            summarizers: options.summarizers,
+            probe: options.probe,
             search: options.search,
             listener: options.listener,
             sessions: Vec::new(),
@@ -731,6 +747,33 @@ impl Viewer {
             self.follow_newest = false;
             cx.notify();
         }
+    }
+
+    /// The summarizer in use, or `None` when summaries were turned off at launch.
+    pub(crate) fn summarizer(&self) -> Option<&Choice> {
+        self.summaries.as_ref().map(|_| &self.summarizer)
+    }
+
+    /// The summarizers to offer, and how to check whether each can run.
+    pub(crate) fn summarizers(&self) -> (&[Choice], Probe) {
+        (&self.summarizers, self.probe)
+    }
+
+    /// Summarize with `choice` from the next batch on, and remember it for the next launch
+    /// (unless it came from `--summarizer`).
+    pub(crate) fn set_summarizer(&mut self, choice: Choice, cx: &mut Context<Self>) {
+        if let Some(summaries) = &self.summaries {
+            summaries.set_model(choice.model());
+        }
+        if let Some(key) = choice.key() {
+            let mut prefs = Prefs::load(&self.data_dir);
+            prefs.summarizer = Some(key.to_owned());
+            if let Err(err) = prefs.save(&self.data_dir) {
+                ichnos_core::error_log::append(&self.data_dir, &format!("settings: {err:?}"));
+            }
+        }
+        self.summarizer = choice;
+        cx.notify();
     }
 
     fn toggle_play(&mut self, cx: &mut Context<Self>) {
