@@ -90,6 +90,17 @@
           }
         ]
       }
+    ],
+    "Notification": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "ichnos hook claude-code",
+            "timeout": 10
+          }
+        ]
+      }
     ]
   }
 }

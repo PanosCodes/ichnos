@@ -35,13 +35,14 @@ pub fn clock(ms: i64) -> String {
 }
 
 /// Input fields that tell the most about a call, best first.
-const TELLING_FIELDS: [&str; 6] = [
+const TELLING_FIELDS: [&str; 7] = [
     "command",
     "file_path",
     "pattern",
     "description",
     "prompt",
     "skill",
+    "message",
 ];
 
 /// The most telling part of a tool's input: the command, path, pattern, …
@@ -373,6 +374,10 @@ pub(crate) mod tests {
         assert_eq!(
             summarize(&json!({"truncated": true, "head": "start…"})),
             "start…"
+        );
+        assert_eq!(
+            summarize(&json!({"message": "Waiting for input", "notification_type": "idle"})),
+            "Waiting for input"
         );
     }
 

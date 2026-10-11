@@ -107,7 +107,8 @@ summaries(event_id, summary)  -- one plain-English sentence per finished call,
 The file is the session (`sessions/<session-id>.db`); `record->>'session_id'` repeats its id.
 
 `event` is one of `SessionStart`, `UserPromptSubmit`, `PreToolUse`, `PostToolUse`,
-`PostToolUseFailure`, `SubagentStart`, `SubagentStop`, `Stop`, `AssistantMessage`, `Debug`.
+`PostToolUseFailure`, `SubagentStart`, `SubagentStop`, `Stop`, `Notification`, `AssistantMessage`,
+`Debug`.
 
 Fields of `record`:
 
