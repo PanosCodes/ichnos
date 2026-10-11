@@ -1,7 +1,7 @@
 //! The Claude Code adapter: turn one Claude Code hook payload into Ichnos events.
 //!
 //! Wired for `PreToolUse`, `PostToolUse`, `PostToolUseFailure`, `SubagentStart`, `SubagentStop`,
-//! `UserPromptSubmit`, `SessionStart` and `Stop` (see `hooks.json`). Claude Code's hook event
+//! `UserPromptSubmit`, `SessionStart`, `Stop` and `Notification` (see `hooks.json`). Claude Code's hook event
 //! names are the Ichnos event names, so the payload maps field by field. Subagent tool calls carry
 //! `agent_id`/`agent_type`, so the main agent and each subagent form separate lanes.
 //!
@@ -33,6 +33,8 @@ const EXTRA_KEYS: [&str; 7] = [
     "permission_mode",
     "cwd",
 ];
+
+const NOTIFICATION_KEYS: [&str; 3] = ["message", "title", "notification_type"];
 
 /// Payload key -> Ichnos event field, for the fields that are copied as they are.
 const FIELDS: [(&str, &str); 9] = [
@@ -120,6 +122,13 @@ fn translate(payload: &Map<String, Value>) -> Map<String, Value> {
         .collect();
     if let Some(prompt) = payload.get("prompt") {
         event.insert("prompt".to_owned(), prompt.clone());
+    }
+    let notification: Map<String, Value> = NOTIFICATION_KEYS
+        .iter()
+        .filter_map(|&key| Some((key.to_owned(), payload.get(key)?.clone())))
+        .collect();
+    if !event.contains_key("input") && !notification.is_empty() {
+        event.insert("input".to_owned(), Value::Object(notification));
     }
     let mut extra: Map<String, Value> = EXTRA_KEYS
         .iter()
@@ -243,6 +252,20 @@ mod tests {
         );
         assert_eq!(lines[1]["status"], json!("ok"));
         assert_eq!(lines[1]["response"], json!("ok"));
+    }
+
+    #[test]
+    fn a_notification_keeps_its_message_as_input() {
+        let dir = tempfile::tempdir().unwrap();
+        run(
+            dir.path(),
+            r#"{"hook_event_name":"Notification","session_id":"s1","message":"Claude needs your permission to use Bash","notification_type":"permission_prompt","cwd":"/x"}"#,
+        );
+        let lines = logged(dir.path(), "s1");
+        assert_eq!(
+            lines[0]["input"],
+            json!({"message": "Claude needs your permission to use Bash", "notification_type": "permission_prompt"})
+        );
     }
 
     #[test]

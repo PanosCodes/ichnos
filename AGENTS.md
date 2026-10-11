@@ -44,6 +44,8 @@ Run `mise run check` before saying a change is done. CI runs the same three step
 - Read `.agents/skill/rust-best-practices/SKILL.md` before writing Rust.
 - `unsafe_code` is forbidden. The one exception is the registration call in `crates/ichnos-vec`,
   which has its own `[lints]` table for that reason; don't add `unsafe` anywhere else. Clippy `pedantic` is on, and `unwrap`/`expect` warn outside tests.
+- Name a module's file after the module (`adapter.rs` next to `adapter/`), never `mod.rs`; in
+  this repo "mod" reads as a Claude Code mod. Clippy's `mod_module_files` enforces it.
 - Write doc comments for public items, and put backticks around identifiers and product names
   in them (`doc_markdown` is enforced).
 - Keep logic that doesn't need a window in `view_state.rs` and unit-test it there. Use the GPUI
