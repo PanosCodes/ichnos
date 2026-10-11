@@ -3554,6 +3554,7 @@ dependencies = [
  "ichnos-model",
  "ichnos-search",
  "mimalloc",
+ "serde",
  "serde_json",
  "tempfile",
  "thiserror 2.0.21",

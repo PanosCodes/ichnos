@@ -9,7 +9,18 @@ use ichnos_core::store::{NewEvent, SessionId, Store};
 use serde_json::{Value, json};
 
 use super::{Options, Viewer, bind_keys};
+use crate::prefs::Prefs;
+use crate::summarizers::{Availability, Choice};
+use crate::summary_host::SummaryHost;
 use crate::view_state::View;
+
+/// Claude Code runs here and Apple Foundation Models doesn't, without starting either.
+fn fake_probe(choice: &Choice) -> Availability {
+    match choice {
+        Choice::AppleFoundationModels => Availability::Missing("no fm here"),
+        _ => Availability::Ready,
+    }
+}
 
 /// Store `records` as session `id` in the sessions folder of `data_dir`.
 fn record(data_dir: &Path, id: &str, records: &[Value]) {
@@ -61,6 +72,15 @@ fn session() -> Vec<Value> {
 
 /// A viewer on session `s1`, with its data loaded.
 fn open(cx: &mut TestAppContext, data_dir: &Path) -> (Entity<Viewer>, VisualTestContext) {
+    open_with(cx, data_dir, None)
+}
+
+/// A viewer on session `s1` that summarizes with `summaries`.
+fn open_with(
+    cx: &mut TestAppContext,
+    data_dir: &Path,
+    summaries: Option<SummaryHost>,
+) -> (Entity<Viewer>, VisualTestContext) {
     record(data_dir, "s1", &session());
     cx.update(|cx| {
         gpui_kit::init(cx);
@@ -70,7 +90,10 @@ fn open(cx: &mut TestAppContext, data_dir: &Path) -> (Entity<Viewer>, VisualTest
         data_dir: data_dir.to_owned(),
         session: Some("s1".parse().unwrap()),
         view: View::Tree,
-        summaries: None,
+        summaries,
+        summarizer: crate::summarizers::Choice::ClaudeCode,
+        summarizers: crate::summarizers::choices(None),
+        probe: fake_probe,
         search: None,
         listener: None,
     };
@@ -428,6 +451,61 @@ fn the_settings_window_switches_following(cx: &mut TestAppContext) {
     });
     viewer.update(cx, |viewer, cx| viewer.set_follow_newest(true, cx));
     assert!(cx.read(|cx| viewer.read(cx).follows_newest()));
+}
+
+#[gpui_kit::test]
+fn the_summarizer_dropdown_switches_and_remembers_the_summarizer(cx: &mut TestAppContext) {
+    use gpui_kit::test::TestWindowExt as _;
+
+    let dir = tempfile::tempdir().unwrap();
+    let sessions = dir.path().join(ichnos_core::SESSIONS_DIR);
+    // A paused summarizer: the test never asks a real model.
+    let host = SummaryHost::start(sessions, dir.path().to_owned(), None).unwrap();
+    let (viewer, _visual) = open_with(cx, dir.path(), Some(host));
+    let (_settings, settings) =
+        cx.add_window_view(|window, cx| crate::settings::Settings::new(viewer.clone(), window, cx));
+    settle(settings);
+    settings.update(|window, cx| {
+        window.render_frame(cx);
+        assert!(f32::from(window.find("summarizer").bounds().size.width) > 0.);
+        assert!(
+            window.try_find("summarizer-missing").is_none(),
+            "Claude Code runs here, so no reason is shown"
+        );
+    });
+
+    // The native menu's items dispatch this action; index 1 is Apple Foundation Models.
+    settings.dispatch_action(crate::settings::PickSummarizer { index: 1 });
+    settle(settings);
+    assert_eq!(
+        settings.update(|_, cx| viewer.read(cx).summarizer().cloned()),
+        Some(Choice::AppleFoundationModels)
+    );
+    assert_eq!(
+        Prefs::load(dir.path()).summarizer.as_deref(),
+        Some("apple-foundation-models")
+    );
+    settings.update(|window, cx| {
+        window.render_frame(cx);
+        assert!(
+            f32::from(window.find("summarizer-missing").bounds().size.width) > 0.,
+            "the probe said Apple Foundation Models can't run, so the reason is shown"
+        );
+    });
+}
+
+#[gpui_kit::test]
+fn without_summaries_the_settings_show_no_dropdown(cx: &mut TestAppContext) {
+    use gpui_kit::test::TestWindowExt as _;
+
+    let dir = tempfile::tempdir().unwrap();
+    let (viewer, _visual) = open(cx, dir.path());
+    let (_settings, settings) =
+        cx.add_window_view(|window, cx| crate::settings::Settings::new(viewer.clone(), window, cx));
+    settings.update(|window, cx| {
+        window.render_frame(cx);
+        assert!(window.try_find("summarizer").is_none());
+    });
 }
 
 /// What the clipboard holds as text.

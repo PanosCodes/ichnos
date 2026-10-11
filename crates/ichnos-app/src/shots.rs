@@ -53,7 +53,16 @@ pub fn run(out: &Path, data_dir: &Path, session: Option<&SessionId>) {
                     data_dir: data_dir.to_owned(),
                     session: session.cloned(),
                     view,
-                    summaries: None,
+                    // Paused, so the settings shot has its dropdown and no model is asked.
+                    summaries: crate::summary_host::SummaryHost::start(
+                        data_dir.join(ichnos_core::SESSIONS_DIR),
+                        data_dir.to_owned(),
+                        None,
+                    )
+                    .ok(),
+                    summarizer: crate::summarizers::Choice::ClaudeCode,
+                    summarizers: crate::summarizers::choices(None),
+                    probe: |_| crate::summarizers::Availability::Ready,
                     search: None,
                     listener: None,
                 };

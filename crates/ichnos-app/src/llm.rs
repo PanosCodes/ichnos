@@ -5,6 +5,7 @@
 //! `ICHNOS_SYSTEM_PROMPT` environment variable, for commands that take one
 //! (`--system-prompt "$ICHNOS_SYSTEM_PROMPT"`).
 
+use std::ffi::OsString;
 use std::io;
 use std::process::Stdio;
 use std::time::Duration;
@@ -47,6 +48,8 @@ pub enum LlmError {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Llm {
     command_line: String,
+    /// Environment variables set for the command on top of the inherited ones.
+    env: Vec<(String, OsString)>,
 }
 
 impl Llm {
@@ -56,7 +59,16 @@ impl Llm {
     pub fn new(command_line: impl Into<String>) -> Self {
         Self {
             command_line: command_line.into(),
+            env: Vec::new(),
         }
+    }
+
+    /// Also set the environment variable `name` to `value` for the command, such as a `PATH`
+    /// that finds the user's tools when the app was started outside a terminal.
+    #[must_use]
+    pub fn env(mut self, name: impl Into<String>, value: impl Into<OsString>) -> Self {
+        self.env.push((name.into(), value.into()));
+        self
     }
 
     /// The command's stdout for `prompt`, with `system` in [`SYSTEM_PROMPT_VAR`].
@@ -72,6 +84,7 @@ impl Llm {
         };
         let mut child = Command::new("sh")
             .args(["-c", &self.command_line])
+            .envs(self.env.iter().map(|(name, value)| (name, value)))
             .env(SYSTEM_PROMPT_VAR, system)
             .current_dir(std::env::temp_dir())
             .stdin(Stdio::piped())
@@ -115,6 +128,12 @@ mod tests {
     async fn the_prompt_goes_to_stdin_and_the_system_prompt_to_the_environment() {
         let llm = Llm::new(r#"printf '%s|' "$ICHNOS_SYSTEM_PROMPT"; cat"#);
         assert_eq!(llm.complete("be brief", "hi").await.unwrap(), "be brief|hi");
+    }
+
+    #[tokio::test]
+    async fn extra_environment_variables_reach_the_command() {
+        let llm = Llm::new(r#"cat >/dev/null; printf %s "$GREETING""#).env("GREETING", "hello");
+        assert_eq!(llm.complete("", "").await.unwrap(), "hello");
     }
 
     #[tokio::test]

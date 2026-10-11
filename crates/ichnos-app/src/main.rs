@@ -12,11 +12,13 @@
 
 mod live;
 mod llm;
+mod prefs;
 mod present;
 mod settings;
 #[cfg(feature = "screenshots")]
 mod shots;
 mod summarizer;
+mod summarizers;
 mod summary_host;
 mod theme;
 mod view_state;
@@ -27,29 +29,19 @@ use std::io;
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-use crate::llm::Llm;
 use clap::Parser;
 use gpui_kit::{AppContext as _, Bounds, TitlebarOptions, WindowBounds, WindowOptions, px, size};
 use ichnos_core::instance::{self, Command, Listener};
 use ichnos_core::store::SessionId;
 use ichnos_search::Search;
 
+use crate::prefs::Prefs;
 use crate::summary_host::SummaryHost;
 use crate::view_state::View;
 use crate::viewer::{Options, Viewer};
 
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
-
-/// The summarizer used unless `--summarizer` names another: Haiku through the Claude Code CLI,
-/// with no tools, no MCP servers, hooks disabled and only user settings, so the summarizing
-/// session never shows up in the logs itself. The system prompt replaces Claude Code's own.
-const DEFAULT_SUMMARIZER: &str = concat!(
-    "MAX_THINKING_TOKENS=0 claude -p --model haiku --tools '' --strict-mcp-config ",
-    "--setting-sources user --settings '{\"disableAllHooks\":true,\"alwaysThinkingEnabled\":false}' ",
-    "--no-session-persistence --disable-slash-commands ",
-    "--system-prompt \"$ICHNOS_SYSTEM_PROMPT\" --output-format text",
-);
 
 #[derive(Debug, Parser)]
 #[command(version, about)]
@@ -66,8 +58,8 @@ struct Cli {
     #[arg(long)]
     no_summaries: bool,
     /// Command line that writes the one-line summaries: it gets the prompt on stdin and the
-    /// instructions in `$ICHNOS_SYSTEM_PROMPT`, and prints the reply [default: Haiku through
-    /// `claude -p`].
+    /// instructions in `$ICHNOS_SYSTEM_PROMPT`, and prints the reply [default: the one chosen in
+    /// Settings, else Haiku through `claude -p`].
     #[arg(long, env = "ICHNOS_SUMMARIZER")]
     summarizer: Option<String>,
     /// Don't index sessions for search by meaning in the session switcher.
@@ -91,6 +83,9 @@ fn main() -> ExitCode {
         shots::run(out.as_ref(), &data_dir, cli.session.as_ref());
         return ExitCode::SUCCESS;
     }
+    // Fill the cached login-shell `PATH` off the UI thread; the first read takes about half a
+    // second.
+    std::thread::spawn(summarizers::login_path);
     // One app per data directory: a second launch hands its request to the first.
     let socket = instance::socket_path(&data_dir);
     let listener = match Listener::bind(&socket) {
@@ -124,11 +119,14 @@ fn main() -> ExitCode {
             }
         }
     };
+    let summarizer = summarizers::initial(
+        cli.summarizer.as_deref(),
+        Prefs::load(&data_dir).summarizer.as_deref(),
+    );
     let summaries = if cli.no_summaries {
         None
     } else {
-        let llm = Llm::new(cli.summarizer.as_deref().unwrap_or(DEFAULT_SUMMARIZER));
-        match SummaryHost::start(sessions_dir, data_dir.clone(), llm) {
+        match SummaryHost::start(sessions_dir, data_dir.clone(), summarizer.model()) {
             Ok(host) => Some(host),
             Err(err) => {
                 eprintln!("summaries are off: {err}");
@@ -141,6 +139,9 @@ fn main() -> ExitCode {
         session: cli.session,
         view: cli.view,
         summaries,
+        summarizer,
+        summarizers: summarizers::choices(cli.summarizer.as_deref()),
+        probe: summarizers::probe,
         search,
         listener,
     };

@@ -85,14 +85,14 @@ enum Command {
         /// Do nothing when the viewer is already running (how the hook runs it).
         #[arg(long)]
         unless_open: bool,
-        /// Start the viewer without the one-line Haiku summaries.
+        /// Start the viewer without the one-line summaries.
         #[arg(long)]
         no_summaries: bool,
         /// Start the viewer without search by meaning in the session switcher.
         #[arg(long)]
         no_search: bool,
         /// Command line that writes the one-line summaries (prompt on stdin, reply on stdout)
-        /// [default: `claude -p --model haiku …`].
+        /// [default: the one chosen in the viewer's Settings, else `claude -p --model haiku …`].
         #[arg(long, env = "ICHNOS_SUMMARIZER")]
         summarizer: Option<String>,
     },
