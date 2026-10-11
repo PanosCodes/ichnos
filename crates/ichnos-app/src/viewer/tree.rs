@@ -4,6 +4,7 @@ use accesskit::Role;
 use std::ops::Range;
 
 use gpui_kit::TestSupportExt as _;
+use gpui_kit::component::tooltip::Tooltip;
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
     AnyElement, Context, FontWeight, InteractiveElement as _, IntoElement, ParentElement as _,
@@ -14,6 +15,9 @@ use ichnos_model::labels::{ChipClass, duration, label, skill_name, tokens};
 use ichnos_model::model::{Node, NodeKind};
 
 use super::{LONG_MS, ROW_HEIGHT, Viewer, one_line};
+
+/// How many characters of the mono badge fit its 52px column.
+const BADGE_CHARS: usize = 7;
 use crate::present::{Tone, look, row_tokens};
 use crate::theme::{self, MONO, color, tone_bar, tone_icon, tone_text};
 use crate::view_state::{BARS_MIN_MAIN, TreeRow};
@@ -144,16 +148,22 @@ impl Viewer {
                     .text_color(tone_icon(look.icon_tone))
                     .child(look.icon),
             )
-            .child(
+            .child({
+                let badge = look.badge;
                 div()
+                    .id(("badge", row.id_index()))
                     .w(px(52.))
                     .flex_none()
                     .font_family(MONO)
                     .text_size(px(theme::FS_SMALL))
                     .text_color(tone_text(look.tone))
                     .truncate()
-                    .child(look.badge),
-            )
+                    .when(badge.chars().count() > BADGE_CHARS, |d| {
+                        let full = badge.clone();
+                        d.tooltip(move |window, cx| Tooltip::new(full.clone()).build(window, cx))
+                    })
+                    .child(badge)
+            })
             .child(
                 div()
                     .flex()
