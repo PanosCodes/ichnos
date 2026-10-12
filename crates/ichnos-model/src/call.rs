@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use std::fmt;
 use std::sync::Arc;
 
-use ichnos_core::event::{Event, Status};
+use ichnos_core::event::{Event, FileRef, Status, Todo};
 use serde_json::Value;
 
 /// The viewer's identity for an entry: a tool call's id, or `event:epoch_ms:agent_id`.
@@ -194,6 +194,36 @@ impl Call {
         self.first().extra(name)
     }
 
+    /// The call's label, from its first event.
+    #[must_use]
+    pub fn label(&self) -> Option<&str> {
+        self.first().label()
+    }
+
+    /// The files the call read or wrote, from its first event.
+    #[must_use]
+    pub fn files(&self) -> &[FileRef] {
+        self.first().files()
+    }
+
+    /// The skill the call loaded, from its first event.
+    #[must_use]
+    pub fn skill(&self) -> Option<&str> {
+        self.first().skill()
+    }
+
+    /// The todo list the call set, from its first event.
+    #[must_use]
+    pub fn todos(&self) -> Option<&[Todo]> {
+        self.first().todos()
+    }
+
+    /// The subagent the call started, from the event that finished it.
+    #[must_use]
+    pub fn spawned_agent(&self) -> Option<&str> {
+        self.finish().and_then(Event::spawned_agent)
+    }
+
     /// Mark a call that never finished as interrupted at `at`.
     pub(crate) fn interrupt(&mut self, at: i64) {
         self.end = Some(at);
@@ -238,6 +268,7 @@ pub fn pair_calls(events: &[Arc<Event>]) -> Vec<Call> {
 
 #[cfg(test)]
 pub(crate) mod tests {
+    use ichnos_core::event::FileOp;
     use serde_json::json;
 
     use super::*;
@@ -277,5 +308,39 @@ pub(crate) mod tests {
         let stop = event(&json!({"event": "Stop", "epoch_ms": 2, "agent_id": "main"}));
         assert_eq!(key_of(&call).as_str(), "t1");
         assert_eq!(key_of(&stop).as_str(), "Stop:2:main");
+    }
+
+    #[test]
+    fn tool_fields_are_read_from_the_first_event_and_the_spawned_agent_from_the_finish() {
+        let events = [
+            event(
+                &json!({"event": "PreToolUse", "epoch_ms": 1, "tool_use_id": "t1",
+                          "label": "edit it", "skill": "s",
+                          "files": [{"path": "/a", "op": "write"}, {"path": "/b", "op": "move"}],
+                          "todos": [{"content": "x", "status": "pending", "activeForm": "X-ing"}]}),
+            ),
+            event(
+                &json!({"event": "PostToolUse", "epoch_ms": 2, "tool_use_id": "t1",
+                          "spawned_agent": "a1"}),
+            ),
+        ];
+        let call = &pair_calls(&events)[0];
+        assert_eq!((call.label(), call.skill()), (Some("edit it"), Some("s")));
+        let ops: Vec<_> = call.files().iter().map(|file| file.op).collect();
+        assert_eq!(ops, [FileOp::Write, FileOp::Other]);
+        assert_eq!(call.todos().map(<[Todo]>::len), Some(1));
+        assert_eq!(call.spawned_agent(), Some("a1"));
+    }
+
+    #[test]
+    fn an_event_without_tool_fields_has_none() {
+        let call = &pair_calls(&[event(&json!({"event": "PreToolUse", "epoch_ms": 1,
+                                                 "tool_use_id": "t1", "tool_name": "Agent"}))])[0];
+        assert_eq!(
+            (call.label(), call.skill(), call.todos()),
+            (None, None, None)
+        );
+        assert_eq!(call.files(), []);
+        assert_eq!(call.spawned_agent(), None);
     }
 }

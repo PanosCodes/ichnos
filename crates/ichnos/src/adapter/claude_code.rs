@@ -10,6 +10,7 @@
 
 pub mod install;
 mod tail;
+mod tool_fields;
 mod transcript;
 
 use std::path::{Path, PathBuf};
@@ -126,6 +127,33 @@ pub fn import(logger: &mut Logger, session: &SessionId) -> Result<usize, Adapter
     Ok(messages.len())
 }
 
+/// Add tool fields to the stored tool events and notifications of `session` that lack them, for
+/// sessions recorded before the adapter wrote them. Returns how many records changed.
+///
+/// # Errors
+///
+/// Returns [`StoreError`] when the database can't be read or written; then nothing changes.
+pub fn add_missing_tool_fields(
+    logger: &mut Logger,
+    session: &SessionId,
+) -> Result<usize, StoreError> {
+    let store = logger.store(session)?;
+    let mut changed = Vec::new();
+    for row in store.events_after(0)? {
+        let Ok(Value::Object(mut record)) = serde_json::from_str(&row.json) else {
+            continue;
+        };
+        let before = record.clone();
+        add_tool_fields(&mut record);
+        if record != before {
+            let json = serde_json::to_string(&record).unwrap_or(row.json);
+            changed.push((row.id, json));
+        }
+    }
+    store.set_records(&changed)?;
+    Ok(changed.len())
+}
+
 /// The Ichnos event for one hook payload, before `ichnos_core::log` fills in time and status.
 fn translate(payload: &Map<String, Value>) -> Map<String, Value> {
     let mut event: Map<String, Value> = FIELDS
@@ -155,7 +183,21 @@ fn translate(payload: &Map<String, Value>) -> Map<String, Value> {
         extra.insert("transcript_path".to_owned(), path.clone());
     }
     event.insert("extra".to_owned(), Value::Object(extra));
+    add_tool_fields(&mut event);
     event
+}
+
+/// Add Ichnos's tool fields to a translated (or stored) event, from its own name, tool, input and
+/// response; fields already there are replaced.
+fn add_tool_fields(event: &mut Map<String, Value>) {
+    let field = |name: &str| event.get(name).unwrap_or(&Value::Null);
+    let fields = tool_fields::for_event(
+        field("event").as_str().unwrap_or_default(),
+        field("tool_name").as_str(),
+        field("input"),
+        field("response"),
+    );
+    event.extend(fields);
 }
 
 /// The assistant messages added to the transcript at `main` (and its subagents) since the last
@@ -253,10 +295,12 @@ mod tests {
                 "response",
                 "error",
                 "prompt",
-                "extra"
+                "extra",
+                "label"
             ]
         );
         assert_eq!(lines[0]["input"], json!({"command": "ls"}));
+        assert_eq!(lines[0]["label"], json!("ls"));
         assert_eq!(
             lines[0]["extra"],
             json!({"cwd": "/x"}),
@@ -264,6 +308,34 @@ mod tests {
         );
         assert_eq!(lines[1]["status"], json!("ok"));
         assert_eq!(lines[1]["response"], json!("ok"));
+    }
+
+    #[test]
+    fn tool_fields_are_added_to_events_stored_without_them_once() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut logger = Logger::new(dir.path());
+        for event in [
+            json!({"event": "PreToolUse", "session_id": "s1", "tool_use_id": "t1", "tool_name": "Read",
+                   "input": {"file_path": "/a.rs"}}),
+            json!({"event": "PostToolUse", "session_id": "s1", "tool_use_id": "t2", "tool_name": "Agent",
+                   "response": {"agentId": "a1"}}),
+            json!({"event": "Stop", "session_id": "s1"}),
+        ] {
+            logger.log(event.as_object().unwrap(), Utc::now()).unwrap();
+        }
+        let session: SessionId = "s1".parse().unwrap();
+
+        assert_eq!(add_missing_tool_fields(&mut logger, &session).unwrap(), 2);
+        assert_eq!(add_missing_tool_fields(&mut logger, &session).unwrap(), 0);
+        let lines = logged(dir.path(), "s1");
+        assert_eq!(lines[0]["files"], json!([{"path": "/a.rs", "op": "read"}]));
+        assert_eq!(
+            lines[0]["input"],
+            json!({"file_path": "/a.rs"}),
+            "the rest is kept"
+        );
+        assert_eq!(lines[1]["spawned_agent"], json!("a1"));
+        assert_eq!(lines[2].get("label"), None);
     }
 
     #[test]
@@ -278,6 +350,24 @@ mod tests {
             lines[0]["input"],
             json!({"message": "Claude needs your permission to use Bash", "notification_type": "permission_prompt"})
         );
+        assert_eq!(
+            lines[0]["label"],
+            json!("Claude needs your permission to use Bash")
+        );
+    }
+
+    #[test]
+    fn an_agent_call_records_the_subagent_it_started_and_an_edit_its_file() {
+        let dir = tempfile::tempdir().unwrap();
+        for payload in [
+            r#"{"hook_event_name":"PreToolUse","session_id":"s1","tool_use_id":"t1","tool_name":"Edit","tool_input":{"file_path":"/a.rs","old_string":"x","new_string":"y"}}"#,
+            r#"{"hook_event_name":"PostToolUse","session_id":"s1","tool_use_id":"t2","tool_name":"Agent","tool_response":{"agentId":"a1"}}"#,
+        ] {
+            run(dir.path(), payload);
+        }
+        let lines = logged(dir.path(), "s1");
+        assert_eq!(lines[0]["files"], json!([{"path": "/a.rs", "op": "write"}]));
+        assert_eq!(lines[1]["spawned_agent"], json!("a1"));
     }
 
     #[test]

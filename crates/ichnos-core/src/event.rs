@@ -1,7 +1,11 @@
-//! Logged hook events as typed values.
+//! Logged Ichnos events as typed values.
 //!
-//! The hook stores each event as a JSON record (see `hook.rs` in the CLI). [`Event::parse`] reads
-//! one back, keeping the original text for searching and copying.
+//! [`crate::log::Logger`] stores each event as a JSON record. [`Event::parse`] reads one back,
+//! keeping the original text for searching and copying.
+//!
+//! The tool fields (`label`, `files`, `skill`, `todos`, `spawned_agent`) say what a call did in
+//! Ichnos's own terms. Producers set them; nothing here reads a tool's own input or response to
+//! guess them.
 
 use std::fmt;
 
@@ -49,7 +53,39 @@ impl fmt::Display for Status {
     }
 }
 
-/// One logged hook event.
+/// A file a tool call read or wrote, from its `files` tool field.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct FileRef {
+    /// The file's path, as the agent named it.
+    pub path: String,
+    /// Whether the call read or wrote it.
+    pub op: FileOp,
+}
+
+/// What a tool call did to a file.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum FileOp {
+    /// The call read the file.
+    Read,
+    /// The call created or changed the file.
+    Write,
+    /// An operation this version doesn't know; the file is listed nowhere.
+    #[serde(other)]
+    Other,
+}
+
+/// One item of an agent's todo list, from a `todos` tool field.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct Todo {
+    /// What to do.
+    pub content: String,
+    /// `pending`, `in_progress` or `completed`.
+    #[serde(default)]
+    pub status: String,
+}
+
+/// One logged Ichnos event.
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 pub struct Event {
     /// The database row id; it orders events and names them in summaries.
@@ -81,6 +117,16 @@ pub struct Event {
     prompt: Value,
     #[serde(default)]
     extra: Map<String, Value>,
+    #[serde(default)]
+    label: Option<String>,
+    #[serde(default)]
+    files: Vec<FileRef>,
+    #[serde(default)]
+    skill: Option<String>,
+    #[serde(default)]
+    todos: Option<Vec<Todo>>,
+    #[serde(default)]
+    spawned_agent: Option<String>,
     /// The record exactly as stored, for searching and "copy as JSON".
     #[serde(skip)]
     json: String,
@@ -196,6 +242,36 @@ impl Event {
     #[must_use]
     pub fn extra(&self, name: &str) -> Option<&Value> {
         self.extra.get(name)
+    }
+
+    /// The one line to show for a tool call or notification, as its producer chose it.
+    #[must_use]
+    pub fn label(&self) -> Option<&str> {
+        self.label.as_deref().filter(|label| !label.is_empty())
+    }
+
+    /// The files the call read or wrote.
+    #[must_use]
+    pub fn files(&self) -> &[FileRef] {
+        &self.files
+    }
+
+    /// The skill the call loaded.
+    #[must_use]
+    pub fn skill(&self) -> Option<&str> {
+        self.skill.as_deref().filter(|skill| !skill.is_empty())
+    }
+
+    /// The todo list the call set, replacing any earlier one.
+    #[must_use]
+    pub fn todos(&self) -> Option<&[Todo]> {
+        self.todos.as_deref()
+    }
+
+    /// The subagent the call started, on the event that finished it.
+    #[must_use]
+    pub fn spawned_agent(&self) -> Option<&str> {
+        self.spawned_agent.as_deref().filter(|id| !id.is_empty())
     }
 
     /// The record exactly as stored.

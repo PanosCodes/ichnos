@@ -10,7 +10,7 @@ use gpui_kit::{
     StatefulInteractiveElement as _, Styled as _, Window, div, px, uniform_list,
 };
 use ichnos_core::event::Status;
-use ichnos_model::labels::{clock, duration, skill_name, summarize};
+use ichnos_model::labels::{clock, duration, summarize};
 
 use super::tree::empty;
 use super::{ROW_HEIGHT, Viewer, one_line};
@@ -90,12 +90,7 @@ impl Viewer {
         let call = &row.call;
         let key = call.key().clone();
         let ai = self.summaries().get(&key);
-        let input = if call.input().is_null() {
-            call.prompt()
-        } else {
-            call.input()
-        };
-        let what = ai.cloned().unwrap_or_else(|| summarize(input));
+        let what = ai.cloned().unwrap_or_else(|| summarize(call));
         let failed = call.status() == Some(Status::Error);
         let selected = self.state.selected() == Some(&key);
         let dur = call.duration_ms().or_else(|| {
@@ -147,7 +142,7 @@ impl Viewer {
                     .gap(px(6.))
                     .overflow_hidden()
                     .child(div().flex_1().min_w_0().truncate().child(one_line(&what)))
-                    .when_some(skill_name(call), |d, name| d.child(Viewer::skill_tag(name))),
+                    .when_some(call.skill(), |d, name| d.child(Viewer::skill_tag(name))),
             )
             .test_support();
         Viewer::with_row_menu(row, call.key().clone(), Some(row_id), cx)

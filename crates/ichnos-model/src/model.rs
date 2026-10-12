@@ -4,8 +4,7 @@
 //! Pure: no clock, no I/O. Everything time-dependent comes in through a [`Moment`].
 //!
 //! The tree has one turn per prompt. A turn holds model steps and calls; a subagent's work hangs
-//! under the `Agent` call that started it (matched by `agentId`), or under the turn it ran in
-//! otherwise. Nodes live in one arena and refer to each other by [`NodeId`].
+//! under the call whose `spawned_agent` names it, or under the turn it ran in otherwise. Nodes live in one arena and refer to each other by [`NodeId`].
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -15,13 +14,10 @@ use serde_json::Value;
 use crate::call::{Call, Key, pair_calls};
 use crate::session_data::SessionData;
 use crate::step::Step;
-use ichnos_core::event::{Event, MAIN_AGENT, Status};
+use ichnos_core::event::{Event, FileOp, MAIN_AGENT, Status, Todo};
 
 /// A call still "started" after this long without new events is not running any more.
 pub const STALE_MS: i64 = 30 * 60 * 1000;
-
-/// Tools whose `file_path` counts as a changed file.
-pub const EDIT_TOOLS: [&str; 4] = ["Write", "Edit", "MultiEdit", "NotebookEdit"];
 
 /// The moment a model is built for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -592,45 +588,32 @@ impl SessionModel {
             if failed {
                 state.errors += 1;
             }
-            let input = call.input();
-            let text = |name: &str| input.get(name).and_then(Value::as_str);
-            let path = text("file_path").or_else(|| text("notebook_path"));
-            let tool = call.tool_name().unwrap_or_default();
-            if let Some(path) = path {
-                if EDIT_TOOLS.contains(&tool) {
-                    match state.changed.iter_mut().find(|file| file.path == path) {
-                        Some(file) => {
-                            file.times += 1;
-                            file.failed = failed;
-                        }
-                        None => state.changed.push(FileTouch {
-                            path: path.to_owned(),
-                            times: 1,
-                            failed,
-                        }),
+            for file in call.files() {
+                let list = match file.op {
+                    FileOp::Write => &mut state.changed,
+                    FileOp::Read => &mut state.read,
+                    FileOp::Other => continue,
+                };
+                let write = file.op == FileOp::Write;
+                match list.iter_mut().find(|touch| touch.path == file.path) {
+                    Some(touch) => {
+                        touch.times += 1;
+                        touch.failed = write && failed;
                     }
-                }
-                if tool == "Read" {
-                    match state.read.iter_mut().find(|file| file.path == path) {
-                        Some(file) => file.times += 1,
-                        None => state.read.push(FileTouch {
-                            path: path.to_owned(),
-                            times: 1,
-                            failed: false,
-                        }),
-                    }
+                    None => list.push(FileTouch {
+                        path: file.path.clone(),
+                        times: 1,
+                        failed: write && failed,
+                    }),
                 }
             }
-            if tool == "Skill"
-                && let Some(skill) = text("skill")
+            if let Some(skill) = call.skill()
                 && !state.skills.iter().any(|known| known == skill)
             {
                 state.skills.push(skill.to_owned());
             }
-            if tool == "TodoWrite"
-                && let Some(todos) = input.get("todos").and_then(Value::as_array)
-            {
-                state.todos = Some(todos.iter().filter_map(Todo::from_value).collect());
+            if let Some(todos) = call.todos() {
+                state.todos = Some(todos.to_vec());
             }
         }
         state.turns = self
@@ -845,31 +828,12 @@ pub struct FileTouch {
     pub failed: bool,
 }
 
-/// One item of a `TodoWrite` list.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Todo {
-    /// What to do.
-    pub content: String,
-    /// `pending`, `in_progress` or `completed`.
-    pub status: String,
-}
-
-impl Todo {
-    fn from_value(value: &Value) -> Option<Self> {
-        let text = |name: &str| value.get(name).and_then(Value::as_str).map(str::to_owned);
-        Some(Self {
-            content: text("content")?,
-            status: text("status").unwrap_or_default(),
-        })
-    }
-}
-
 /// What a session looked like at one moment.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct StateAt {
     /// Calls, model steps and subagents running then.
     pub running: Vec<NodeId>,
-    /// The latest `TodoWrite` list, if there was one yet.
+    /// The latest todo list a call set, if there was one yet.
     pub todos: Option<Vec<Todo>>,
     /// Files changed so far, in first-change order.
     pub changed: Vec<FileTouch>,
@@ -899,35 +863,6 @@ pub fn moments(events: &[Arc<Event>], steps: &[Arc<Step>]) -> Vec<i64> {
     all.sort_unstable();
     all.dedup();
     all
-}
-
-/// The subagent an `Agent` call started, from its response: `{"agentId": "a53dcc5a…", …}`.
-///
-/// The id may sit in nested JSON text, so the response is searched as text.
-#[must_use]
-pub fn agent_id_from(response: &Value) -> Option<String> {
-    if response.is_null() {
-        return None;
-    }
-    let text = response.to_string();
-    let key = "agentId";
-    let mut rest = text.as_str();
-    while let Some(at) = rest.find(key) {
-        rest = &rest[at + key.len()..];
-        let after = rest.trim_start_matches(['\\', '"']).trim_start();
-        let Some(after) = after.strip_prefix(':') else {
-            continue;
-        };
-        let value = after.trim_start().trim_start_matches(['\\', '"']);
-        let id: String = value
-            .chars()
-            .take_while(|c| c.is_ascii_alphanumeric() || *c == '_' || *c == '-')
-            .collect();
-        if !id.is_empty() {
-            return Some(id);
-        }
-    }
-    None
 }
 
 /// The session at `moment` as a tree.
@@ -1013,15 +948,13 @@ impl Builder {
         found
     }
 
-    /// Remember an `Agent`/`Task` call by the subagent id in its response.
+    /// Remember a call by the subagent it started.
     fn register_agent_call(&mut self, id: NodeId) {
         let Some(call) = self.nodes[id.0].call() else {
             return;
         };
-        if matches!(call.tool_name(), Some("Agent" | "Task"))
-            && let Some(agent_id) = agent_id_from(call.response())
-        {
-            self.agent_calls.insert(agent_id, id);
+        if let Some(agent_id) = call.spawned_agent() {
+            self.agent_calls.insert(agent_id.to_owned(), id);
         }
     }
 
@@ -1446,6 +1379,13 @@ pub(crate) mod tests {
         json!({"event": "PreToolUse", "epoch_ms": ms, "tool_use_id": id, "tool_name": tool,
                "input": input, "agent_id": agent, "agent_type": agent_type, "status": "started"})
     }
+    /// `record` with `fields` added, such as a producer's tool fields.
+    pub(crate) fn with(mut record: Value, fields: &Value) -> Value {
+        if let (Some(record), Some(fields)) = (record.as_object_mut(), fields.as_object()) {
+            record.extend(fields.clone());
+        }
+        record
+    }
     pub(crate) fn bash(ms: i64, id: &str) -> Value {
         pre(ms, id, "Bash", &json!({"command": "ls"}), "main")
     }
@@ -1570,7 +1510,7 @@ pub(crate) mod tests {
             pre(4, "sub-read", "Read", &json!({"file_path": "/x"}), "a1"),
             post(5, "sub-read", &json!({})),
             json!({"event": "SubagentStop", "epoch_ms": 6, "agent_id": "a1", "agent_type": "Explore"}),
-            post(7, "agent-call", &json!({"response": {"agentId": "a1"}})),
+            post(7, "agent-call", &json!({"spawned_agent": "a1"})),
             stop(8),
         ];
         let model = build_session(&data(&events, &[]), DONE);
@@ -1581,6 +1521,29 @@ pub(crate) mod tests {
         assert_eq!(
             keys(&model, model.node(model.turns()[0]).children()),
             ["agent-call"]
+        );
+    }
+
+    #[test]
+    fn an_agent_call_without_spawned_agent_does_not_adopt_a_subagent() {
+        let events = [
+            prompt(1, "do it"),
+            pre(2, "agent-call", "Agent", &json!({}), "main"),
+            json!({"event": "SubagentStart", "epoch_ms": 3, "agent_id": "a1", "agent_type": "Explore"}),
+            pre(4, "sub-read", "Read", &json!({}), "a1"),
+            post(5, "sub-read", &json!({})),
+            json!({"event": "SubagentStop", "epoch_ms": 6, "agent_id": "a1", "agent_type": "Explore"}),
+            post(7, "agent-call", &json!({"response": {"agentId": "a1"}})),
+            stop(8),
+        ];
+        let model = build_session(&data(&events, &[]), DONE);
+        assert!(
+            node(&model, "agent-call").children().is_empty(),
+            "core reads `spawned_agent` only, never the tool's response"
+        );
+        assert_eq!(
+            keys(&model, model.node(model.turns()[0]).children()),
+            ["agent-call", "agent:a1"]
         );
     }
 
@@ -1671,16 +1634,19 @@ pub(crate) mod tests {
     fn stats_agent_graph_and_state_at_agree_with_the_tree() {
         let events = [
             prompt(1, "do it"),
-            pre(2, "w", "Write", &json!({"file_path": "/a.rs"}), "main"),
+            with(
+                pre(2, "w", "Write", &json!({}), "main"),
+                &json!({"files": [{"path": "/a.rs", "op": "write"}]}),
+            ),
             post(3, "w", &json!({})),
-            pre(4, "r", "Read", &json!({"file_path": "/b.rs"}), "main"),
+            with(
+                pre(4, "r", "Read", &json!({}), "main"),
+                &json!({"files": [{"path": "/b.rs", "op": "read"}]}),
+            ),
             post(5, "r", &json!({"status": "error"})),
-            pre(
-                6,
-                "todo",
-                "TodoWrite",
+            with(
+                pre(6, "todo", "TodoWrite", &json!({}), "main"),
                 &json!({"todos": [{"content": "x", "status": "pending"}]}),
-                "main",
             ),
             post(7, "todo", &json!({})),
             stop(8),
@@ -1704,7 +1670,7 @@ pub(crate) mod tests {
             |files: &[FileTouch]| files.iter().map(|f| f.path.clone()).collect::<Vec<_>>();
         assert_eq!(paths_of(&early.changed), ["/a.rs"]);
         assert_eq!(paths_of(&early.read), ["/b.rs"]);
-        assert_eq!(early.todos, None, "TodoWrite came later");
+        assert_eq!(early.todos, None, "the todo list came later");
         assert_eq!(model.state_at(8).todos.map(|todos| todos.len()), Some(1));
     }
 
@@ -1716,16 +1682,5 @@ pub(crate) mod tests {
         assert_eq!(moments(data.events(), data.steps()), [1, 2, 3, 4]);
         let model = build_session(&data, DONE);
         assert_eq!(node(&model, "t1").raw_data().len(), 2);
-    }
-
-    #[test]
-    fn the_agent_id_is_found_in_nested_json_text() {
-        assert_eq!(agent_id_from(&json!({"agentId": "a1"})), Some("a1".into()));
-        assert_eq!(
-            agent_id_from(&json!([{"text": "{\"agentId\": \"a-2_b\", \"x\": 1}"}])),
-            Some("a-2_b".into())
-        );
-        assert_eq!(agent_id_from(&json!({"other": 1})), None);
-        assert_eq!(agent_id_from(&Value::Null), None);
     }
 }

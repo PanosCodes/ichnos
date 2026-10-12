@@ -1,8 +1,10 @@
 //! The one way into Ichnos: store events in the Ichnos event format.
 //!
 //! An Ichnos event is a JSON object with an `event` name (`SessionStart`, `UserPromptSubmit`,
-//! `PreToolUse`, `PostToolUse`, `PostToolUseFailure`, `SubagentStart`, `SubagentStop`, `Stop` or
-//! `AssistantMessage`), a `session_id`, and the fields `Logger::log` reads.
+//! `PreToolUse`, `PostToolUse`, `PostToolUseFailure`, `SubagentStart`, `SubagentStop`, `Stop`,
+//! `Notification`, `AssistantMessage` or `Debug`), a `session_id`, and the fields `Logger::log`
+//! reads. A tool event may also carry the tool fields that [`crate::event`] describes (`label`,
+//! `files`, `skill`, `todos`, `spawned_agent`); they are stored as they are, never clipped.
 //! Where it came from doesn't matter here: adapters translate their tool's payloads into this
 //! format, and anything else can write it directly.
 //!

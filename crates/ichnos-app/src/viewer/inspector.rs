@@ -460,7 +460,7 @@ impl Viewer {
             })
             .child(heading("Todo list"))
             .child(match &state.todos {
-                None => dim("no TodoWrite yet").into_any_element(),
+                None => dim("no todos yet").into_any_element(),
                 Some(todos) => div()
                     .flex()
                     .flex_col()
