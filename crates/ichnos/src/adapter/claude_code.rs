@@ -1,8 +1,7 @@
 //! The Claude Code adapter: turn one Claude Code hook payload into Ichnos events.
 //!
-//! Wired for `PreToolUse`, `PostToolUse`, `PostToolUseFailure`, `SubagentStart`, `SubagentStop`,
-//! `UserPromptSubmit`, `SessionStart`, `Stop` and `Notification` (see `hooks.json`). Claude Code's hook event
-//! names are the Ichnos event names, so the payload maps field by field. Subagent tool calls carry
+//! Wired for the events in [`HOOK_EVENTS`], which `ichnos install` registers. Claude Code's hook
+//! event names are the Ichnos event names, so the payload maps field by field. Subagent tool calls carry
 //! `agent_id`/`agent_type`, so the main agent and each subagent form separate lanes.
 //!
 //! Every payload also names the session's transcript. Each run logs the assistant messages added
@@ -22,6 +21,19 @@ use serde_json::{Map, Value};
 use thiserror::Error;
 
 use self::transcript::Offsets;
+
+/// The Claude Code hook events this adapter translates; `ichnos install` registers exactly these.
+pub const HOOK_EVENTS: [&str; 9] = [
+    "PreToolUse",
+    "PostToolUse",
+    "PostToolUseFailure",
+    "SubagentStart",
+    "SubagentStop",
+    "UserPromptSubmit",
+    "SessionStart",
+    "Stop",
+    "Notification",
+];
 
 /// Payload keys copied into `extra` when present.
 const EXTRA_KEYS: [&str; 7] = [

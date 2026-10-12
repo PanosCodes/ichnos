@@ -3,7 +3,7 @@
 //!
 //! `ichnos log` reads Ichnos events (JSON lines, see `ichnos_core::log`) from stdin: the one
 //! way in. `ichnos hook <adapter>` is the same for an agent whose hooks send their own payload;
-//! the adapter translates it (`claude-code`, wired from the block in `hooks.json`). When an event
+//! the adapter translates it (`claude-code`, wired for the events in its `HOOK_EVENTS`). When an event
 //! starts a session, both also run `ichnos open` in the background, which starts the viewer
 //! unless it's running.
 //! `ichnos open [<session>]` shows a session in the viewer app (`ichnos-app`), starting it if

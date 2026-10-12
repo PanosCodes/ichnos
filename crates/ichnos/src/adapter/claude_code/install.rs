@@ -1,4 +1,4 @@
-//! Adds the `ichnos hook` entries from `hooks.json` to a Claude Code settings file, or removes them,
+//! Adds an `ichnos hook` entry for each of [`HOOK_EVENTS`] to a Claude Code settings file, or removes them,
 //! together with the `ichnos` skill that lets agents query the logs and the `ichnos` plugin that
 //! asks the model for its own account of each turn when a debug profile is set.
 //!
@@ -12,11 +12,16 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
-use serde_json::{Map, Value};
+use serde_json::{Map, Value, json};
 use thiserror::Error;
 
-/// The hook block users would otherwise copy by hand; the source of truth for what is installed.
-const HOOKS_JSON: &str = include_str!("../../../../../hooks.json");
+use super::HOOK_EVENTS;
+
+/// The command each installed hook runs.
+const HOOK_COMMAND: &str = "ichnos hook claude-code";
+
+/// Seconds Claude Code waits for a hook before giving up on it.
+const HOOK_TIMEOUT_SECS: u64 = 10;
 
 /// The skill that teaches agents to query the session databases; compiled in, so it always
 /// matches the schema this binary writes.
@@ -179,7 +184,7 @@ fn write_plugin(dir: &Path) -> Result<Change, InstallError> {
 }
 
 /// Delete the files in the plugin's `hooks` folder that aren't in [`PLUGIN_FILES`]. Claude Code
-/// loads only what `hooks.json` names, so a leftover is harmless, but it hides which version runs.
+/// loads only what the plugin's `hooks.json` names, so a leftover is harmless, but it hides which version runs.
 fn remove_stale_hooks(hooks: &Path) -> Result<Change, InstallError> {
     let read_error = |source| InstallError::Read {
         path: hooks.to_owned(),
@@ -316,25 +321,29 @@ fn remove_skill(path: &Path) -> Result<Change, InstallError> {
     Ok(Change::Updated)
 }
 
-/// Replace any ichnos hooks in `settings` with the ones from `hooks.json`.
+/// The group `install` adds under `event`: one [`HOOK_COMMAND`] entry, matching every tool on the
+/// tool events.
+fn hook_group(event: &str) -> Value {
+    let entry = json!({ "type": "command", "command": HOOK_COMMAND, "timeout": HOOK_TIMEOUT_SECS });
+    if event.contains("ToolUse") {
+        json!({ "matcher": "*", "hooks": [entry] })
+    } else {
+        json!({ "hooks": [entry] })
+    }
+}
+
+/// Replace any ichnos hooks in `settings` with one [`hook_group`] per [`HOOK_EVENTS`] event.
 fn add_hooks(settings: &mut Value) -> Result<(), String> {
     remove_hooks(settings)?;
-    let wanted: Value = serde_json::from_str(HOOKS_JSON).map_err(|_| "hooks.json".to_owned())?;
-    let Some(Value::Object(wanted)) = wanted.get("hooks").cloned() else {
-        return Err("hooks.json `hooks`".into());
-    };
     let hooks = object_entry(settings, "hooks")?;
-    for (event, groups) in wanted {
-        let Value::Array(groups) = groups else {
-            return Err(format!("hooks.json `hooks.{event}`"));
-        };
+    for event in HOOK_EVENTS {
         let Value::Array(existing) = hooks
-            .entry(event.clone())
+            .entry(event)
             .or_insert_with(|| Value::Array(Vec::new()))
         else {
             return Err(format!("`hooks.{event}`"));
         };
-        existing.extend(groups);
+        existing.push(hook_group(event));
     }
     Ok(())
 }
@@ -506,7 +515,11 @@ mod tests {
         assert_eq!(install(&path).unwrap(), Change::Updated);
 
         let settings: Value = serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
-        let mut wanted: Value = serde_json::from_str(HOOKS_JSON).unwrap();
+        let hooks: Map<String, Value> = HOOK_EVENTS
+            .iter()
+            .map(|&event| (event.to_owned(), json!([hook_group(event)])))
+            .collect();
+        let mut wanted = json!({ "hooks": hooks });
         let plugin = plugin_path(&path).to_string_lossy().into_owned();
         wanted["env"] = json!({ PLUGIN_DIRS_VAR: plugin });
         assert_eq!(settings, wanted);
@@ -692,6 +705,25 @@ mod tests {
 
         assert!(matches!(install(&path), Err(InstallError::Parse { .. })));
         assert_eq!(fs::read_to_string(&path).unwrap(), "{ not json");
+    }
+
+    #[test]
+    fn install_registers_every_hook_event_once_and_tool_events_match_all() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(".claude/settings.json");
+        install(&path).unwrap();
+
+        let settings: Value = serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+        let hooks = settings["hooks"].as_object().unwrap();
+        assert_eq!(hooks.keys().collect::<Vec<_>>(), HOOK_EVENTS);
+        for (event, groups) in hooks {
+            assert_eq!(groups.as_array().unwrap().len(), 1, "{event}");
+            assert_eq!(groups[0]["hooks"], json!([ichnos_entry()]), "{event}");
+            let matcher = groups[0].get("matcher").cloned();
+            let tool_event = event.contains("ToolUse");
+            assert_eq!(matcher, tool_event.then(|| json!("*")), "{event}");
+        }
+        assert!(hooks.contains_key("Notification"));
     }
 
     #[test]

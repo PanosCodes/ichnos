@@ -99,9 +99,10 @@ the hook processes of one session and the viewer write and read the same file at
 
 ## Writing: from agent event to row
 
-1. Claude Code runs `ichnos hook claude-code` for each hook in `hooks.json` (`PreToolUse`,
-   `PostToolUse`, `PostToolUseFailure`, `SubagentStart`, `SubagentStop`, `UserPromptSubmit`,
-   `SessionStart`, `Stop`, `Notification`) with the payload on stdin.
+1. Claude Code runs `ichnos hook claude-code` for each hook that `ichnos install` registered
+   (the adapter's `HOOK_EVENTS`: `PreToolUse`, `PostToolUse`, `PostToolUseFailure`,
+   `SubagentStart`, `SubagentStop`, `UserPromptSubmit`, `SessionStart`, `Stop`, `Notification`)
+   with the payload on stdin.
 2. The adapter (`adapter/claude_code.rs`) maps the payload to an Ichnos event; Claude Code's
    hook names are the Ichnos event names, so this is mostly field by field. Subagent calls carry
    `agent_id` / `agent_type`, so each subagent becomes its own lane.
