@@ -72,8 +72,13 @@ enum Command {
         /// The agent that recorded the session.
         #[arg(value_enum)]
         adapter: Adapter,
-        /// The session to complete.
-        session: SessionId,
+        /// The session to complete [default with `--tool-fields`: every recorded session].
+        #[arg(required_unless_present = "tool_fields")]
+        session: Option<SessionId>,
+        /// Instead, add the tool fields (files, skills, todos, subagents, labels) to stored events
+        /// that were recorded without them. Reopen a session in the viewer to see them.
+        #[arg(long)]
+        tool_fields: bool,
     },
     /// Show the viewer app, starting `ichnos-app` in the background if it isn't running.
     Open {
@@ -194,16 +199,8 @@ fn main() -> ExitCode {
         Command::Import {
             adapter: Adapter::ClaudeCode,
             session,
-        } => match claude_code::import(&mut Logger::new(&sessions_dir), &session) {
-            Ok(count) => {
-                println!("Logged {count} model messages of session {session}");
-                ExitCode::SUCCESS
-            }
-            Err(err) => {
-                eprintln!("{}", error_chain(&err));
-                ExitCode::FAILURE
-            }
-        },
+            tool_fields,
+        } => import(&sessions_dir, session, tool_fields),
         Command::Open {
             session,
             view,
@@ -249,6 +246,81 @@ fn main() -> ExitCode {
 
 /// Store the Ichnos events on stdin, one per line. Never breaks the producer: failures go to the
 /// error log in `dir`.
+/// `ichnos import claude-code`: log `session`'s model messages, or with `tool_fields`, add the
+/// tool fields to `session` or to every session.
+fn import(sessions_dir: &Path, session: Option<SessionId>, tool_fields: bool) -> ExitCode {
+    if tool_fields {
+        return add_tool_fields(sessions_dir, session);
+    }
+    let Some(session) = session else {
+        eprintln!("name the session to import");
+        return ExitCode::FAILURE;
+    };
+    match claude_code::import(&mut Logger::new(sessions_dir), &session) {
+        Ok(count) => {
+            println!("Logged {count} model messages of session {session}");
+            ExitCode::SUCCESS
+        }
+        Err(err) => {
+            eprintln!("{}", error_chain(&err));
+            ExitCode::FAILURE
+        }
+    }
+}
+
+/// `ichnos import claude-code --tool-fields`: add the tool fields to `session`, or to every session
+/// in `sessions_dir`, and report how many records changed.
+fn add_tool_fields(sessions_dir: &Path, session: Option<SessionId>) -> ExitCode {
+    let sessions = match session {
+        Some(session) => vec![session],
+        None => match recorded_sessions(sessions_dir) {
+            Ok(sessions) => sessions,
+            Err(err) => {
+                eprintln!("could not list {}: {err}", sessions_dir.display());
+                return ExitCode::FAILURE;
+            }
+        },
+    };
+    let mut logger = Logger::new(sessions_dir);
+    let (mut records, mut failed) = (0, 0);
+    for session in &sessions {
+        match claude_code::add_missing_tool_fields(&mut logger, session) {
+            Ok(count) => records += count,
+            Err(err) => {
+                failed += 1;
+                eprintln!("{session}: {}", error_chain(&err));
+            }
+        }
+    }
+    println!(
+        "Added tool fields to {records} records in {} sessions",
+        sessions.len() - failed
+    );
+    if failed == 0 {
+        ExitCode::SUCCESS
+    } else {
+        ExitCode::FAILURE
+    }
+}
+
+/// The sessions with a database in `sessions_dir`, by file name.
+fn recorded_sessions(sessions_dir: &Path) -> std::io::Result<Vec<SessionId>> {
+    let mut sessions = Vec::new();
+    for entry in std::fs::read_dir(sessions_dir)? {
+        let path = entry?.path();
+        if path.extension().is_some_and(|ext| ext == "db")
+            && let Some(Ok(session)) = path
+                .file_stem()
+                .and_then(|stem| stem.to_str())
+                .map(str::parse::<SessionId>)
+        {
+            sessions.push(session);
+        }
+    }
+    sessions.sort();
+    Ok(sessions)
+}
+
 fn log_stdin(dir: &Path, sessions_dir: &Path, no_open: bool) {
     let mut logger = Logger::new(sessions_dir);
     for line in std::io::stdin().lock().lines() {

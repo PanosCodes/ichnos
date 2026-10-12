@@ -155,7 +155,10 @@ fn facts(entry: &AgentBox, model: &SessionModel, viewer: &Viewer) -> Facts {
             .map(|start| entry.end().unwrap_or(end) - start),
         tool_ms,
         calls,
-        prompt: field("description")
+        prompt: node_ref
+            .and_then(|n| n.call())
+            .and_then(|call| call.label())
+            .map(str::to_owned)
             .or_else(|| field("prompt"))
             .or_else(|| node_ref.map(|n| label(n, summaries, model).text))
             .unwrap_or_default(),

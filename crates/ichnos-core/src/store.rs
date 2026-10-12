@@ -255,6 +255,25 @@ impl Store {
         Ok(self.conn.last_insert_rowid())
     }
 
+    /// Replace the records of stored events, `(row id, record)`, in one transaction: for rewriting
+    /// old records in a newer shape. Row ids stay, so a reader that already read a row keeps the
+    /// old record until it reads the session again.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError::Query`] when an update fails; then none are kept.
+    pub fn set_records(&mut self, records: &[(i64, String)]) -> Result<(), StoreError> {
+        let tx = self.conn.transaction()?;
+        {
+            let mut update = tx.prepare("UPDATE events SET record = ?2 WHERE id = ?1")?;
+            for (id, record) in records {
+                update.execute(params![id, record])?;
+            }
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
     /// `epoch_ms` of the `PreToolUse` that started `tool_use_id`, if it was logged.
     ///
     /// # Errors
@@ -625,5 +644,20 @@ mod tests {
         drop(store);
         let reopened = Store::open(&path).unwrap();
         assert_eq!(reopened.summarized_event_ids().unwrap(), HashSet::from([1]));
+    }
+
+    #[test]
+    fn set_records_replaces_records_and_keeps_row_ids() {
+        let (_dir, mut store) = store();
+        let id = store.add_event(&event(1, "A", None, "{\"v\":1}")).unwrap();
+        store.set_records(&[(id, "{\"v\":2}".into())]).unwrap();
+        let rows = store.events_after(0).unwrap();
+        assert_eq!(
+            rows,
+            [Row {
+                id,
+                json: "{\"v\":2}".into()
+            }]
+        );
     }
 }

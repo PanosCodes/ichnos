@@ -63,7 +63,11 @@ Everything heavy (GPUI, embeddings, the summarizer) is in the app.
 ### Where agent knowledge lives
 
 Only the adapters know about a particular agent. Core reads and writes Ichnos events, and the
-viewer shows Ichnos events; neither checks which agent produced them. An agent that can emit Ichnos
+viewer shows Ichnos events; neither checks which agent produced them. What a tool call did (the
+files it read or wrote, the skill it loaded, the todo list it set, the subagent it started, the
+line its row shows) reaches core as Ichnos's tool fields (`label`, `files`, `skill`, `todos`,
+`spawned_agent`), which the adapter fills in from the agent's own tool names and inputs. Core
+never reads a tool's input or response to guess them. An agent that can emit Ichnos
 events itself needs no adapter at all: it pipes them into `ichnos log`. An adapter exists for
 agents, like Claude Code, whose hooks can only run a command with their own payload.
 
@@ -105,7 +109,8 @@ the hook processes of one session and the viewer write and read the same file at
    with the payload on stdin.
 2. The adapter (`adapter/claude_code.rs`) maps the payload to an Ichnos event; Claude Code's
    hook names are the Ichnos event names, so this is mostly field by field. Subagent calls carry
-   `agent_id` / `agent_type`, so each subagent becomes its own lane.
+   `agent_id` / `agent_type`, so each subagent becomes its own lane. `tool_fields.rs` adds the
+   tool fields. `ichnos import claude-code --tool-fields` adds them to sessions recorded before.
 3. Hooks don't carry the model's text, so the adapter also reads the lines added to the session's
    transcript since its last run (`transcript.rs`) and turns each assistant line into an
    `AssistantMessage` event. Its read offset lives in `adapter_state`, so concurrent hook runs
@@ -152,8 +157,7 @@ GPUI views                      (app/viewer.rs and viewer/: tree, graph, table, 
   function serves both the live view and replay: replaying is building the model as of an
   earlier time.
 - **Tree shape.** One turn per prompt. A turn holds model steps and calls; a subagent's work
-  hangs under the `Agent` call that started it (matched by `agentId`), or under its turn
-  otherwise. Nodes live in one arena and refer to each other by `NodeId`.
+  hangs under the call whose `spawned_agent` names it, or under its turn otherwise. Nodes live in one arena and refer to each other by `NodeId`.
 - **Presentation.** `model/labels.rs` (chips, text, durations, tokens) and `app/present.rs`
   (tone, icon, badge, status) decide what a row says; views only turn that into layout and color.
 - **Testing seam.** Everything above the GPUI views is plain Rust and unit-tested without a

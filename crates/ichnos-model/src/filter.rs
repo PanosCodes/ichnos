@@ -5,7 +5,7 @@ use std::collections::HashSet;
 
 use serde_json::Value;
 
-use crate::call::{Call, Key};
+use crate::call::Key;
 use crate::labels::{Summaries, label};
 use crate::model::{Node, NodeId, NodeKind, SessionModel};
 use ichnos_core::event::{MAIN_AGENT, Status};
@@ -177,14 +177,15 @@ fn agent_text(node: &Node) -> String {
     parts.join(" ").to_lowercase()
 }
 
-/// Where a call points: its path, command or pattern, as searchable text.
+/// Where a call points: the files it read or wrote and its label, as searchable text.
 fn file_text(node: &Node) -> String {
-    let Some(input) = node.call().map(Call::input) else {
+    let Some(call) = node.call() else {
         return String::new();
     };
-    ["file_path", "notebook_path", "path", "command", "pattern"]
+    call.files()
         .iter()
-        .filter_map(|&name| input.get(name).and_then(Value::as_str))
+        .map(|file| file.path.as_str())
+        .chain(call.label())
         .collect::<Vec<_>>()
         .join(" ")
         .to_lowercase()

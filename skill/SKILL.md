@@ -122,14 +122,18 @@ Fields of `record`:
 | `prompt` | the user's prompt (`UserPromptSubmit`) |
 | `extra.last_assistant_message` | the reply that ended the turn (`Stop`, `SubagentStop`) |
 | `extra.cwd`, `extra.source` | on lifecycle events |
+| `label` | the one line a row shows for a tool call or `Notification` (its command, path, …) |
+| `files` | `[{"path", "op"}]` on `PreToolUse`: files the call read (`op` `read`) or wrote (`write`) |
+| `skill`, `todos` | on `PreToolUse`: the skill the call loaded, the todo list it set |
+| `spawned_agent` | on `PostToolUse`: the id of the subagent the call started (its `agent_id`) |
 | `message_id`, `texts`, `thinking`, `tool_use_ids`, `usage`, `model` | on `AssistantMessage` |
 | `extra.debug`, `extra.turn_id` | on `Debug`: the model's own account of the turn it follows (`skills`, `rules`, `outcome`, …; see `docs/ichnos-debug.schema.json`), or `{"invalid": true, "raw": …, "error": …}` |
 
 A field longer than 8000 characters is stored as `{"truncated": true, "original_length": n,
 "head": "<first 8000 chars>"}`. Read such fields with
 `coalesce(record->>'$.prompt.head', record->>'$.prompt')`. For a clipped `input`, `head` is the
-start of the input's JSON text, so fields like `$.input.file_path` are NULL; the files recipe
-below shows how to pull a value out of `head`.
+start of the input's JSON text, so fields like `$.input.file_path` are NULL; `files` and `label`
+are never clipped this way, so prefer them.
 
 A tool call is two events with the same `tool_use_id`. Its `PreToolUse` id is the call's id:
 summaries are keyed by it and the viewer shows it.
@@ -171,18 +175,14 @@ ORDER BY f.id LIMIT 30;
 **Files changed**
 
 ```sql
-WITH w AS (
-  SELECT id, record->>'$.tool_name' AS tool, record->>'$.input.file_path' AS path,
-         -- a clipped input keeps only `head`, the start of its JSON text: take the path from there
-         substr(record->>'$.input.head', instr(record->>'$.input.head', '"file_path"') + 11) AS rest
-  FROM events
-  WHERE event = 'PreToolUse' AND record->>'$.tool_name' IN ('Edit', 'Write', 'MultiEdit', 'NotebookEdit')
-), r AS (
-  SELECT *, substr(rest, instr(rest, '"') + 1) AS tail FROM w
-)
-SELECT coalesce(path, substr(tail, 1, instr(tail, '"') - 1)) AS file, tool, group_concat(id) AS call_ids
-FROM r GROUP BY file, tool ORDER BY min(id);
+SELECT f.value->>'path' AS file, e.record->>'$.tool_name' AS tool, group_concat(e.id) AS call_ids
+FROM events e, json_each(e.record, '$.files') f
+WHERE e.event = 'PreToolUse' AND f.value->>'op' = 'write'
+GROUP BY file, tool ORDER BY min(e.id);
 ```
+
+Sessions recorded before Ichnos wrote `files` have none; `ichnos import claude-code
+--tool-fields` adds them.
 
 **Time and errors per tool**
 

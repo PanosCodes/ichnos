@@ -34,48 +34,19 @@ pub fn clock(ms: i64) -> String {
     ichnos_core::local_time(ms, "%H:%M:%S").unwrap_or_default()
 }
 
-/// Input fields that tell the most about a call, best first.
-const TELLING_FIELDS: [&str; 7] = [
-    "command",
-    "file_path",
-    "pattern",
-    "description",
-    "prompt",
-    "skill",
-    "message",
-];
-
-/// The most telling part of a tool's input: the command, path, pattern, …
+/// What a call's row says without a summary: its producer's `label`, else its input (or, for a
+/// prompt, the prompt) as text.
 #[must_use]
-pub fn summarize(input: &Value) -> String {
-    match input {
-        Value::Null => String::new(),
-        Value::String(text) => text.clone(),
-        Value::Object(fields) => {
-            if fields.get("truncated").and_then(Value::as_bool) == Some(true) {
-                return text(input);
-            }
-            TELLING_FIELDS
-                .iter()
-                .find_map(|&name| {
-                    fields
-                        .get(name)
-                        .and_then(Value::as_str)
-                        .filter(|v| !v.is_empty())
-                })
-                .map_or_else(|| input.to_string(), str::to_owned)
-        }
-        other => other.to_string(),
+pub fn summarize(call: &Call) -> String {
+    if let Some(label) = call.label() {
+        return label.to_owned();
     }
-}
-
-/// The skill name to show as a tag for a Skill tool call.
-#[must_use]
-pub fn skill_name(call: &Call) -> Option<&str> {
-    (call.tool_name() == Some("Skill"))
-        .then(|| call.input().get("skill").and_then(Value::as_str))
-        .flatten()
-        .filter(|name| !name.is_empty())
+    let input = if call.input().is_null() {
+        call.prompt()
+    } else {
+        call.input()
+    };
+    text(input)
 }
 
 /// A duration: `850ms`, `4.2s`, `3m 5s`.
@@ -314,29 +285,16 @@ fn node_label(node: &Node, summaries: &Summaries, model: &SessionModel) -> Label
         } => {
             let ai = summary(agent.stop_event(), summaries)
                 .or_else(|| summaries.get(node.key()).map(String::as_str));
-            let input = call.input();
-            let field = |name: &str| input.get(name).and_then(Value::as_str);
-            let chip = agent
-                .agent_type()
-                .or_else(|| field("subagent_type"))
-                .unwrap_or("subagent");
-            let text = ai.map_or_else(
-                || field("description").map_or_else(|| summarize(input), str::to_owned),
-                str::to_owned,
-            );
+            let chip = agent.agent_type().unwrap_or("subagent");
+            let text = ai.map_or_else(|| summarize(call), str::to_owned);
             Label::new(chip, ChipClass::Agent, text, ai.is_some())
         }
         NodeKind::Call { call, agent: None } | NodeKind::Event(call) => {
             let ai = summaries.get(node.key());
             let chip = call.tool_name().unwrap_or(call.name());
-            let input = if call.input().is_null() {
-                call.prompt()
-            } else {
-                call.input()
-            };
             let text = match ai {
                 Some(ai) => ai.clone(),
-                None => non_empty(summarize(input)).unwrap_or_else(|| last_message(Some(call))),
+                None => non_empty(summarize(call)).unwrap_or_else(|| last_message(Some(call))),
             };
             Label::new(chip, ChipClass::Plain, text, ai.is_some())
         }
@@ -367,46 +325,34 @@ pub(crate) mod tests {
             ],
             ["0", "950", "1.2k", "34k", "1.5M"]
         );
-        assert_eq!(
-            summarize(&json!({"command": "ls -la", "description": "list"})),
-            "ls -la"
-        );
-        assert_eq!(
-            summarize(&json!({"truncated": true, "head": "start…"})),
-            "start…"
-        );
-        assert_eq!(
-            summarize(&json!({"message": "Waiting for input", "notification_type": "idle"})),
-            "Waiting for input"
-        );
     }
 
     #[test]
-    fn skill_name_only_reads_non_empty_skill_tool_inputs() {
-        use std::sync::Arc;
-
-        fn call(tool_name: &str, input: &Value) -> Call {
-            let record = json!({
-                "event": "PreToolUse",
-                "epoch_ms": 1,
-                "tool_use_id": "t1",
-                "tool_name": tool_name,
-                "input": input
-            });
-            let event = Arc::new(ichnos_core::event::Event::parse(1, &record.to_string()).unwrap());
+    fn a_row_says_the_label_else_the_input_or_prompt_as_text() {
+        let call = |record: Value| {
+            let event = std::sync::Arc::new(
+                ichnos_core::event::Event::parse(1, &record.to_string()).unwrap(),
+            );
             crate::call::pair_calls(&[event]).remove(0)
-        }
-
+        };
+        let pre = json!({"event": "PreToolUse", "epoch_ms": 1, "tool_use_id": "t1",
+                         "input": {"command": "ls -la"}});
+        assert_eq!(summarize(&call(pre.clone())), "{\"command\":\"ls -la\"}");
+        let mut labelled = pre;
+        labelled["label"] = json!("ls -la");
+        assert_eq!(summarize(&call(labelled)), "ls -la");
         assert_eq!(
-            skill_name(&call("Skill", &json!({"skill": "rust-best-practices"}))),
-            Some("rust-best-practices")
+            summarize(&call(
+                json!({"event": "PreToolUse", "epoch_ms": 1, "tool_use_id": "t1",
+                                   "input": {"truncated": true, "head": "start…"}})
+            )),
+            "start…"
         );
-        for input in [json!({}), json!({"skill": ""}), json!({"skill": 42})] {
-            assert_eq!(skill_name(&call("Skill", &input)), None);
-        }
         assert_eq!(
-            skill_name(&call("Bash", &json!({"skill": "not-a-skill"}))),
-            None
+            summarize(&call(
+                json!({"event": "UserPromptSubmit", "epoch_ms": 1, "prompt": "hi"})
+            )),
+            "hi"
         );
     }
 
@@ -414,10 +360,11 @@ pub(crate) mod tests {
         vec![
             json!({"event": "UserPromptSubmit", "epoch_ms": 1, "agent_id": "main", "prompt": "fix the bug"}),
             json!({"event": "PreToolUse", "epoch_ms": 2, "tool_use_id": "t1", "tool_name": "Bash",
-                   "input": {"command": "cargo test"}, "agent_id": "main"}),
+                   "input": {"command": "cargo test"}, "label": "cargo test", "agent_id": "main"}),
             json!({"event": "PostToolUse", "epoch_ms": 3, "tool_use_id": "t1", "status": "error", "error": "boom"}),
             json!({"event": "PreToolUse", "epoch_ms": 4, "tool_use_id": "t2", "tool_name": "Read",
-                   "input": {"file_path": "/src/main.rs"}, "agent_id": "main"}),
+                   "input": {"file_path": "/src/main.rs"}, "label": "/src/main.rs",
+                   "files": [{"path": "/src/main.rs", "op": "read"}], "agent_id": "main"}),
             json!({"event": "PostToolUse", "epoch_ms": 5, "tool_use_id": "t2", "status": "ok"}),
         ]
     }

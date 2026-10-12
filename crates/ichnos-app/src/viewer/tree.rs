@@ -11,7 +11,7 @@ use gpui_kit::{
     ScrollWheelEvent, StatefulInteractiveElement as _, Styled as _, div, px, relative,
     uniform_list,
 };
-use ichnos_model::labels::{ChipClass, duration, label, skill_name, tokens};
+use ichnos_model::labels::{ChipClass, duration, label, tokens};
 use ichnos_model::model::{Node, NodeKind};
 
 use super::{LONG_MS, ROW_HEIGHT, Viewer, one_line};
@@ -201,9 +201,10 @@ impl Viewer {
                             .when(raw, |d| d.font_family(MONO).text_size(px(theme::FS_SMALL)))
                             .child(one_line(&label.text)),
                     )
-                    .when_some(node.call().and_then(skill_name), |d, name| {
-                        d.child(Viewer::skill_tag(name))
-                    }),
+                    .when_some(
+                        node.call().and_then(ichnos_model::call::Call::skill),
+                        |d, name| d.child(Viewer::skill_tag(name)),
+                    ),
             )
             .child(numeric(56., theme::DIM).child(if toks > 0 {
                 tokens(toks)
