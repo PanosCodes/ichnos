@@ -17,8 +17,36 @@ use thiserror::Error;
 
 use super::HOOK_EVENTS;
 
-/// The command each installed hook runs.
-const HOOK_COMMAND: &str = "ichnos hook claude-code";
+/// The command each installed hook runs. Agents start hooks with their own `PATH`, which often
+/// lacks `~/.cargo/bin`, so a bare `ichnos` fails on every tool call; the hook uses the absolute
+/// path of the binary that installed it instead.
+fn hook_command() -> String {
+    hook_command_for(std::env::current_exe().ok().as_deref())
+}
+
+/// The hook command for the binary at `exe`. Only a binary named `ichnos` is written by its path,
+/// since [`is_ichnos_hook`] recognizes nothing else; any other name gets the bare `ichnos`.
+fn hook_command_for(exe: Option<&Path>) -> String {
+    let program = exe
+        .filter(|exe| exe.file_name().is_some_and(|name| name == "ichnos"))
+        .map_or_else(
+            || "ichnos".to_owned(),
+            |exe| shell_quote(&exe.to_string_lossy()),
+        );
+    format!("{program} hook claude-code")
+}
+
+/// `text` as one shell word: as is when it has only safe characters, else in single quotes.
+fn shell_quote(text: &str) -> String {
+    let safe = text
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || "/._-+:@".contains(c));
+    if safe && !text.is_empty() {
+        text.to_owned()
+    } else {
+        format!("'{}'", text.replace('\'', r"'\''"))
+    }
+}
 
 /// Seconds Claude Code waits for a hook before giving up on it.
 const HOOK_TIMEOUT_SECS: u64 = 10;
@@ -321,10 +349,11 @@ fn remove_skill(path: &Path) -> Result<Change, InstallError> {
     Ok(Change::Updated)
 }
 
-/// The group `install` adds under `event`: one [`HOOK_COMMAND`] entry, matching every tool on the
+/// The group `install` adds under `event`: one [`hook_command`] entry, matching every tool on the
 /// tool events.
 fn hook_group(event: &str) -> Value {
-    let entry = json!({ "type": "command", "command": HOOK_COMMAND, "timeout": HOOK_TIMEOUT_SECS });
+    let entry =
+        json!({ "type": "command", "command": hook_command(), "timeout": HOOK_TIMEOUT_SECS });
     if event.contains("ToolUse") {
         json!({ "matcher": "*", "hooks": [entry] })
     } else {
@@ -391,14 +420,27 @@ fn remove_hooks(settings: &mut Value) -> Result<(), String> {
     Ok(())
 }
 
-/// Whether a hook entry runs `ichnos hook`, by name or by path, with or without flags.
+/// Whether a hook entry runs `ichnos hook`, by name or by path, quoted or not, with or without flags.
 fn is_ichnos_hook(entry: &Value) -> bool {
     let Some(command) = entry.get("command").and_then(Value::as_str) else {
         return false;
     };
-    let mut words = command.split_whitespace();
-    let program = words.next().map(Path::new).and_then(Path::file_name);
-    program.is_some_and(|name| name == "ichnos") && words.next() == Some("hook")
+    let (program, rest) = split_program(command);
+    let is_ichnos = Path::new(program)
+        .file_name()
+        .is_some_and(|name| name == "ichnos");
+    is_ichnos && rest.split_whitespace().next() == Some("hook")
+}
+
+/// Split a hook command into its program word and the rest, reading a single-quoted program
+/// as one word.
+fn split_program(command: &str) -> (&str, &str) {
+    if let Some(quoted) = command.strip_prefix('\'') {
+        return quoted.split_once('\'').unwrap_or((quoted, ""));
+    }
+    command
+        .split_once(char::is_whitespace)
+        .unwrap_or((command, ""))
 }
 
 /// The object at `settings[key]`, inserting an empty one if it is missing.
@@ -737,5 +779,32 @@ mod tests {
         assert!(is_ichnos_hook(&command("ichnos hook --dir /tmp/x")));
         assert!(is_ichnos_hook(&command("ichnos hook claude-code")));
         assert!(!is_ichnos_hook(&command("not-ichnos hook")));
+        assert!(is_ichnos_hook(&command(
+            "'/Users/me/My Apps/ichnos' hook claude-code"
+        )));
+        assert!(!is_ichnos_hook(&command(
+            "'/Users/me/My Apps/ichnos' install"
+        )));
+    }
+
+    #[test]
+    fn the_hook_command_names_the_binary_by_path_only_when_it_is_recognized() {
+        let by_path = hook_command_for(Some(Path::new("/My Apps/ichnos")));
+        assert_eq!(by_path, "'/My Apps/ichnos' hook claude-code");
+        assert!(is_ichnos_hook(&json!({ "command": by_path })));
+
+        let renamed = hook_command_for(Some(Path::new("/x/ichnos-abc")));
+        assert_eq!(renamed, "ichnos hook claude-code");
+        assert_eq!(hook_command_for(None), "ichnos hook claude-code");
+    }
+
+    #[test]
+    fn shell_quote_leaves_safe_paths_and_quotes_the_rest() {
+        assert_eq!(
+            shell_quote("/Users/me/.cargo/bin/ichnos"),
+            "/Users/me/.cargo/bin/ichnos"
+        );
+        assert_eq!(shell_quote("/My Apps/ichnos"), "'/My Apps/ichnos'");
+        assert_eq!(shell_quote("/it's/ichnos"), r"'/it'\''s/ichnos'");
     }
 }
