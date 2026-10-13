@@ -27,6 +27,7 @@ use gpui_kit::{
 };
 use ichnos_core::catalog::{Catalog, SessionEntry};
 use ichnos_core::instance::{Command, Listener};
+use ichnos_core::one_line;
 use ichnos_core::store::SessionId;
 use ichnos_model::call::Key;
 use ichnos_model::labels::Summaries;
@@ -858,9 +859,4 @@ fn data_of(live: Option<&LiveSession>) -> &SessionData {
 /// The first eight characters of a session id.
 fn short_id(id: &str) -> &str {
     id.get(..8).unwrap_or(id)
-}
-
-/// A one-line version of `text`: whitespace runs become single spaces.
-fn one_line(text: &str) -> String {
-    text.split_whitespace().collect::<Vec<_>>().join(" ")
 }

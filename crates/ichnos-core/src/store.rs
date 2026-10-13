@@ -180,7 +180,7 @@ impl Overview {
 /// `text` with runs of whitespace collapsed to one space, cut to `max` characters with a trailing
 /// `…`; none when nothing is left.
 fn one_line(text: &str, max: usize) -> Option<String> {
-    let line = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    let line = crate::one_line(text);
     if line.is_empty() {
         return None;
     }

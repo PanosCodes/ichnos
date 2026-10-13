@@ -93,10 +93,7 @@ pub(crate) fn docs_from(events: &[Row], summaries: &[Row]) -> Vec<Doc> {
 
 /// `text` on one line and cut to [`DOC_CHARS`]; `None` when it is blank.
 fn doc(event_id: i64, kind: DocKind, text: &str) -> Option<Doc> {
-    let text: String = text
-        .split_whitespace()
-        .collect::<Vec<_>>()
-        .join(" ")
+    let text: String = ichnos_core::one_line(text)
         .chars()
         .take(DOC_CHARS)
         .collect();
