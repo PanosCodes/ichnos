@@ -31,13 +31,7 @@ pub fn text(value: &Value) -> String {
 /// The local time of day of an epoch-millisecond moment, as `14:05:09`.
 #[must_use]
 pub fn clock(ms: i64) -> String {
-    chrono::DateTime::from_timestamp_millis(ms)
-        .map(|at| {
-            at.with_timezone(&chrono::Local)
-                .format("%H:%M:%S")
-                .to_string()
-        })
-        .unwrap_or_default()
+    ichnos_core::local_time(ms, "%H:%M:%S").unwrap_or_default()
 }
 
 /// Input fields that tell the most about a call, best first.

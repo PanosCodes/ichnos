@@ -165,13 +165,7 @@ impl SessionEntry {
         }
         let mtime = i64::try_from(self.mtime_ms).unwrap_or(i64::MAX);
         let when = self.overview.start_ms.unwrap_or(mtime);
-        if let Some(at) = chrono::DateTime::from_timestamp_millis(when) {
-            facts.push(
-                at.with_timezone(&chrono::Local)
-                    .format("%b %-d, %H:%M")
-                    .to_string(),
-            );
-        }
+        facts.extend(crate::local_time(when, "%b %-d, %H:%M"));
         if let (Some(start), Some(end)) = (self.overview.start_ms, self.overview.end_ms) {
             facts.push(span_label(end - start));
         }

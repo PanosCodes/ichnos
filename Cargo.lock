@@ -3348,7 +3348,6 @@ dependencies = [
 name = "ichnos-model"
 version = "0.1.0"
 dependencies = [
- "chrono",
  "ichnos-core",
  "serde",
  "serde_json",
