@@ -26,6 +26,12 @@ pub fn default_data_dir() -> Option<std::path::PathBuf> {
     std::env::var_os("HOME").map(|home| std::path::PathBuf::from(home).join(DEFAULT_DIR_IN_HOME))
 }
 
+/// `text` on one line: runs of whitespace, newlines included, become single spaces.
+#[must_use]
+pub fn one_line(text: &str) -> String {
+    text.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
 /// An epoch-millisecond moment in local time, formatted with `chrono`'s `format`; `None` when it
 /// is out of range.
 #[must_use]
