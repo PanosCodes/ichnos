@@ -44,13 +44,6 @@ impl Filter {
         filter
     }
 
-    /// The same filter, also keeping only failed calls.
-    #[must_use]
-    pub fn errors_only(mut self) -> Self {
-        self.add_is("error".to_owned());
-        self
-    }
-
     fn add_is(&mut self, value: String) {
         if !self.is.contains(&value) {
             self.is.push(value);
@@ -229,7 +222,6 @@ mod tests {
     #[test]
     fn filters_keep_matching_rows_and_their_ancestors() {
         assert_eq!(keys(&Filter::parse("main.rs")), ["t2", TURN]);
-        assert_eq!(keys(&Filter::parse("").errors_only()), ["t1", TURN]);
     }
 
     #[test]
@@ -263,6 +255,6 @@ mod tests {
     fn an_empty_filter_is_inactive() {
         assert!(!Filter::parse("  ").is_active());
         assert!(Filter::parse("x").is_active());
-        assert!(Filter::parse("").errors_only().is_active());
+        assert!(Filter::parse("is:error").is_active());
     }
 }
