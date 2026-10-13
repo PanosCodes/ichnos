@@ -1,5 +1,5 @@
 //! The graph: one card per agent, subagents under the agent that started them, joined by dashed
-//! curves; and the agent inspector beside it.
+//! curves.
 //!
 //! Cards have fixed sizes, so the layout is computed here and the curves are painted from it.
 
@@ -20,39 +20,36 @@ use gpui_kit::TestSupportExt as _;
 
 use crate::zoom::zoom;
 
-use super::inspector::{body, button, heading, key_values};
+mod layout;
+
+use self::layout::{TOOL_ROW, layout};
+
 use super::{ToolSort, Viewer};
 use crate::present::plural;
 use crate::theme::{self, MONO, color};
 
-const PAD: f32 = 24.;
-const CARD: f32 = 300.;
-const MAIN_CARD: f32 = 340.;
-const H_GAP: f32 = 56.;
-const V_GAP: f32 = 90.;
-const TOOL_ROW: f32 = 21.;
 /// How much one press of a zoom button or key zooms.
 pub(super) const ZOOM_STEP: f32 = 1.2;
 /// How much a pixel of ⌘-scroll zooms: 100 px is a factor of e.
 const SCROLL_ZOOM: f32 = 0.01;
 
 /// What the graph shows about one agent.
-struct Facts {
-    name: String,
-    main: bool,
-    dur: Option<i64>,
-    tool_ms: i64,
-    calls: usize,
-    prompt: String,
-    full_prompt: String,
-    returned: String,
-    spawned: String,
-    via: String,
-    status: String,
-    key: Option<Key>,
+pub(super) struct Facts {
+    pub(super) name: String,
+    pub(super) main: bool,
+    pub(super) dur: Option<i64>,
+    pub(super) tool_ms: i64,
+    pub(super) calls: usize,
+    pub(super) prompt: String,
+    pub(super) full_prompt: String,
+    pub(super) returned: String,
+    pub(super) spawned: String,
+    pub(super) via: String,
+    pub(super) status: String,
+    pub(super) key: Option<Key>,
 }
 
-fn facts(entry: &AgentBox, model: &SessionModel, viewer: &Viewer) -> Facts {
+pub(super) fn facts(entry: &AgentBox, model: &SessionModel, viewer: &Viewer) -> Facts {
     let summaries = viewer.summaries();
     let node = entry.key().and_then(|key| model.find(key));
     let prompted: Vec<_> = model
@@ -171,75 +168,8 @@ fn facts(entry: &AgentBox, model: &SessionModel, viewer: &Viewer) -> Facts {
     }
 }
 
-/// Card positions: one row per depth, each row centered.
-struct Layout {
-    /// Graph index -> top-left corner and size.
-    cards: Vec<(usize, Point<f32>, f32, f32)>,
-    /// Parent index, child index.
-    edges: Vec<(usize, usize)>,
-    width: f32,
-    height: f32,
-}
-
-fn card_height(entry: &AgentBox) -> f32 {
-    #[expect(clippy::cast_precision_loss, reason = "a card lists few tools")]
-    let tools = entry.tools().len().max(1) as f32;
-    30. + 22. + tools * TOOL_ROW + 8. + 28.
-}
-
-fn card_width(index: usize) -> f32 {
-    if index == 0 { MAIN_CARD } else { CARD }
-}
-
-fn layout(graph: &AgentGraph) -> Layout {
-    let mut levels: Vec<Vec<usize>> = Vec::new();
-    let mut edges = Vec::new();
-    let mut stack = vec![(0_usize, 0_usize)];
-    while let Some((index, depth)) = stack.pop() {
-        if levels.len() <= depth {
-            levels.resize(depth + 1, Vec::new());
-        }
-        levels[depth].push(index);
-        if let Some(entry) = graph.get(index) {
-            for &child in entry.children().iter().rev() {
-                edges.push((index, child));
-                stack.push((child, depth + 1));
-            }
-        }
-    }
-    let row_width = |level: &[usize]| -> f32 {
-        let cards: f32 = level.iter().map(|&i| card_width(i)).sum();
-        #[expect(clippy::cast_precision_loss, reason = "few cards per row")]
-        let gaps = level.len().saturating_sub(1) as f32 * H_GAP;
-        cards + gaps
-    };
-    let width = levels.iter().map(|l| row_width(l)).fold(0., f32::max) + PAD * 2.;
-    let mut cards = Vec::new();
-    let mut y = PAD;
-    for level in &levels {
-        let mut x = (width - row_width(level)) / 2.;
-        let mut tallest: f32 = 0.;
-        for &index in level {
-            let Some(entry) = graph.get(index) else {
-                continue;
-            };
-            let (w, h) = (card_width(index), card_height(entry));
-            cards.push((index, Point { x, y }, w, h));
-            x += w + H_GAP;
-            tallest = tallest.max(h);
-        }
-        y += tallest + V_GAP;
-    }
-    Layout {
-        cards,
-        edges,
-        width,
-        height: y - V_GAP + PAD + 36.,
-    }
-}
-
 impl Viewer {
-    fn agent_graph(&self) -> AgentGraph {
+    pub(super) fn agent_graph(&self) -> AgentGraph {
         let summaries = self.summaries();
         self.model
             .agent_graph(|node| label(node, summaries, &self.model).text)
@@ -744,128 +674,10 @@ impl Viewer {
             .test_support()
             .into_any_element()
     }
-
-    pub(super) fn render_agent_inspector(&self, cx: &mut Context<Self>) -> AnyElement {
-        let graph = self.agent_graph();
-        let entry = graph
-            .find(self.state.agent())
-            .unwrap_or_else(|| graph.main());
-        let facts = facts(entry, &self.model, self);
-        let filter = if facts.main {
-            "agent:main".to_owned()
-        } else {
-            format!("agent:{}", entry.agent_type().unwrap_or("subagent"))
-        };
-        let status_color = if entry.running() {
-            theme::BLUE_TEXT
-        } else if entry.errors() > 0 {
-            theme::RED_TEXT
-        } else {
-            theme::GREEN
-        };
-        let returned = if facts.returned.is_empty() {
-            if entry.running() {
-                "still running…"
-            } else {
-                "—"
-            }
-            .to_owned()
-        } else {
-            facts.returned.clone()
-        };
-        let prompt = if facts.full_prompt.is_empty() {
-            facts.prompt.clone()
-        } else {
-            facts.full_prompt.clone()
-        };
-        div()
-            .flex()
-            .flex_col()
-            .w(px(self.state.panel().width()))
-            .flex_none()
-            .min_h_0()
-            .bg(color(theme::PANEL))
-            .child(
-                body("agent-body")
-                    .pt(px(14.))
-                    .child(
-                        div()
-                            .flex()
-                            .flex_row()
-                            .items_center()
-                            .gap_2()
-                            .child(agent_badge(facts.main))
-                            .child(
-                                div()
-                                    .font_weight(FontWeight::SEMIBOLD)
-                                    .text_size(px(theme::FS_BASE))
-                                    .text_color(color(theme::BRIGHT))
-                                    .child(facts.name.clone()),
-                            )
-                            .child(
-                                div()
-                                    .ml_auto()
-                                    .text_size(px(theme::FS_SMALL))
-                                    .text_color(color(status_color))
-                                    .child(facts.status.clone()),
-                            ),
-                    )
-                    .child(
-                        div()
-                            .mt(px(3.))
-                            .text_size(px(theme::FS_SMALL))
-                            .text_color(color(theme::DIM))
-                            .child(format!("spawned {}", facts.spawned)),
-                    )
-                    .child(heading("Prompt"))
-                    .child(super::inspector::block(
-                        crate::present::SectionTone::Prose,
-                        &prompt,
-                        cx,
-                    ))
-                    .child(heading("Returned"))
-                    .child(super::inspector::block(
-                        crate::present::SectionTone::Prose,
-                        &returned,
-                        cx,
-                    ))
-                    .child(div().mt_4().child(key_values(&[
-                        ("wall", facts.dur.map_or_else(|| "—".to_owned(), duration)),
-                        ("model", duration(entry.model_ms())),
-                        ("tools", duration(facts.tool_ms)),
-                        ("calls", facts.calls.to_string()),
-                        ("errors", entry.errors().to_string()),
-                        ("out", tokens(entry.output_tokens())),
-                    ])))
-                    .child(
-                        div()
-                            .flex()
-                            .flex_row()
-                            .gap_1p5()
-                            .mt_4()
-                            .text_size(px(theme::FS_SMALL))
-                            .when_some(facts.key.clone(), |d, key| {
-                                d.child(
-                                    button("open-in-tree", "Open in tree →", true, true).on_click(
-                                        cx.listener(move |this, _, _, cx| this.reveal(&key, cx)),
-                                    ),
-                                )
-                            })
-                            .child(
-                                button("filter-agent", "Filter to this agent", false, true)
-                                    .on_click(cx.listener(move |this, _, window, cx| {
-                                        this.set_query(&filter, window, cx);
-                                        this.set_view(crate::view_state::View::Tree, cx);
-                                    })),
-                            ),
-                    ),
-            )
-            .into_any_element()
-    }
 }
 
 /// The `main` or `sub` badge of a card.
-fn agent_badge(main: bool) -> gpui_kit::Div {
+pub(super) fn agent_badge(main: bool) -> gpui_kit::Div {
     let (text, fg, line) = if main {
         ("main", theme::BLUE_TEXT, theme::BLUE_LINE)
     } else {

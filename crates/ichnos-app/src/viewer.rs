@@ -1,6 +1,7 @@
 //! The viewer window's root: follows a session live, rebuilds its model and lays out the toolbar,
 //! replay strip, main view and inspector.
 
+mod agent_inspector;
 mod ask_panel;
 mod copy;
 mod graph;
