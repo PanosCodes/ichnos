@@ -57,8 +57,8 @@ ichnos ──────────► ichnos-core ◄──── ichnos-mode
 | `ichnos-vec` | library | Registers `sqlite-vec` with SQLite. The only crate allowed `unsafe`, for that one call. |
 
 The CLI depends on `ichnos-core` only, so the binary every hook event starts stays small and
-quick to start: Cargo, not review, keeps the model, the summarizer and tokio off the hook path.
-Everything heavy (GPUI, embeddings, tokio) is in the app.
+quick to start: Cargo, not review, keeps the model and the summarizer off the hook path.
+Everything heavy (GPUI, embeddings, the summarizer) is in the app.
 
 ### Where agent knowledge lives
 
@@ -163,8 +163,7 @@ GPUI views                      (app/viewer.rs and viewer/: tree, graph, table, 
 
 ### Summarizer
 
-`app/summarizer.rs`, hosted by `app/summary_host.rs` on a tokio runtime in its own thread so it
-never shares an executor with GPUI.
+`app/summarizer.rs`, on a thread of its own, so it never blocks GPUI's executors.
 
 - The viewer holds a `Watch` guard for the session it shows; the summarizer works on watched
   sessions only, and stops when the guard drops.

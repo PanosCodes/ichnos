@@ -43,8 +43,8 @@ use self::switcher::{Switcher, SwitcherEvent};
 use crate::live::{Connection, LiveSession};
 use crate::prefs::Prefs;
 use crate::present::pretty;
+use crate::summarizer::Summarizer;
 use crate::summarizers::{Choice, Probe};
-use crate::summary_host::SummaryHost;
 use crate::theme::{self, color};
 use crate::view_state::{TableRow, TreeRow, View, ViewState, agent_reference};
 
@@ -173,7 +173,7 @@ pub struct Options {
     /// The view to open on.
     pub view: View,
     /// The summarizer, unless summaries are off.
-    pub summaries: Option<SummaryHost>,
+    pub summaries: Option<Summarizer>,
     /// The summarizer chosen at launch.
     pub summarizer: Choice,
     /// The summarizers listed in Settings.
@@ -198,7 +198,7 @@ pub struct Viewer {
     focus: FocusHandle,
     data_dir: PathBuf,
     sessions_dir: PathBuf,
-    summaries: Option<SummaryHost>,
+    summaries: Option<Summarizer>,
     summarizer: Choice,
     summarizers: Vec<Choice>,
     probe: Probe,
