@@ -8,6 +8,8 @@
 //! - `spawned_agent`: on the `PostToolUse` of an `Agent` (formerly `Task`) call, the subagent it
 //!   started.
 
+use std::borrow::Cow;
+
 use serde_json::{Map, Value, json};
 
 /// Tools that create or change the file at `file_path` / `notebook_path`.
@@ -38,6 +40,8 @@ pub(super) fn for_event(
     input: &Value,
     response: &Value,
 ) -> Map<String, Value> {
+    let input = uncut(input);
+    let input = input.as_ref();
     let mut fields = Map::new();
     let text = |name: &str| {
         input
@@ -85,6 +89,37 @@ pub(super) fn for_event(
         _ => {}
     }
     fields
+}
+
+/// A stored input that `ichnos_core::log` cut to `{truncated, head}` as the object its head
+/// starts, closed where it was cut, so a stored call still gets its label and files; any other
+/// input as it is.
+fn uncut(input: &Value) -> Cow<'_, Value> {
+    let Some(head) = input
+        .get("head")
+        .and_then(Value::as_str)
+        .filter(|_| input["truncated"] == true)
+    else {
+        return Cow::Borrowed(input);
+    };
+    let object = |text: &str| match serde_json::from_str(text) {
+        Ok(object @ Value::Object(_)) => Some(Cow::Owned(object)),
+        _ => None,
+    };
+    // The cut can land inside a string or just after a backslash: close the string there.
+    let mut open = head.to_owned();
+    for _ in 0..4 {
+        for end in ["\"}", "}"] {
+            if let Some(object) = object(&format!("{open}{end}")) {
+                return object;
+            }
+        }
+        open.pop();
+    }
+    // Or inside a key: keep the fields before it.
+    head.rfind(',')
+        .and_then(|at| object(&format!("{}}}", &head[..at])))
+        .unwrap_or(Cow::Borrowed(input))
 }
 
 /// `text` cut to [`LABEL_CHARS`] characters.
@@ -187,6 +222,33 @@ mod tests {
                 .as_str()
                 .map(|l| l.chars().count()),
             Some(LABEL_CHARS)
+        );
+    }
+
+    #[test]
+    fn a_cut_input_still_gives_its_label_and_file() {
+        let cut = |input: Value, chars: usize| {
+            let head: String = input.to_string().chars().take(chars).collect();
+            json!({"truncated": true, "original_length": 9000, "head": head})
+        };
+        let command = json!({"command": "python3 - <<'EOF'\nprint(\"hi\")\nEOF", "timeout": 5});
+        assert_eq!(
+            pre("Bash", &cut(command.clone(), 24))["label"],
+            json!("python3 - <<"),
+            "cut inside the string"
+        );
+        assert_eq!(
+            pre("Bash", &cut(command, 30))["label"],
+            json!("python3 - <<'EOF'"),
+            "cut just after a backslash"
+        );
+        let write = json!({"file_path": "/a.rs", "content": "fn main() {}"});
+        let fields = pre("Write", &cut(write, 30));
+        assert_eq!(fields["files"], json!([{"path": "/a.rs", "op": "write"}]));
+        assert_eq!(fields["label"], json!("/a.rs"));
+        assert_eq!(
+            pre("Bash", &json!({"truncated": true, "head": "not json"})).get("label"),
+            None
         );
     }
 
