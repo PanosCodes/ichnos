@@ -85,7 +85,17 @@ fn open_with(
     data_dir: &Path,
     summaries: Option<Summarizer>,
 ) -> (Entity<Viewer>, VisualTestContext) {
-    record(data_dir, "s1", &session());
+    open_records(cx, data_dir, &session(), summaries)
+}
+
+/// A viewer on session `s1`, recorded from `records`, that summarizes with `summaries`.
+fn open_records(
+    cx: &mut TestAppContext,
+    data_dir: &Path,
+    records: &[Value],
+    summaries: Option<Summarizer>,
+) -> (Entity<Viewer>, VisualTestContext) {
+    record(data_dir, "s1", records);
     cx.update(|cx| {
         gpui_kit::init(cx);
         bind_keys(cx);
@@ -603,4 +613,90 @@ fn a_table_row_s_right_click_menu_copies_its_event_for_an_agent(cx: &mut TestApp
     });
     settle(&mut visual);
     assert_eq!(clipboard(&mut visual).as_deref(), Some("/ichnos s1#1"));
+}
+
+/// A session whose one call has a command far taller and wider than the inspector.
+fn long_call() -> (Vec<Value>, String) {
+    let command = (0..80)
+        .map(|i| format!("echo line {i} {}", "word ".repeat(30)))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let records = vec![
+        json!({"event": "UserPromptSubmit", "epoch_ms": 1000, "agent_id": "main", "prompt": "go"}),
+        json!({"event": "PreToolUse", "epoch_ms": 1100, "tool_use_id": "t1", "tool_name": "Bash",
+               "input": {"command": command}, "label": "echo", "agent_id": "main",
+               "status": "started"}),
+        json!({"event": "PostToolUse", "epoch_ms": 1500, "tool_use_id": "t1", "status": "ok"}),
+    ];
+    (records, command)
+}
+
+#[gpui_kit::test]
+fn a_long_block_scrolls_with_the_inspector(cx: &mut TestAppContext) {
+    use gpui_kit::InputEvent as _;
+    use gpui_kit::test::TestWindowExt as _;
+
+    let dir = tempfile::tempdir().unwrap();
+    let (records, command) = long_call();
+    let (_viewer, mut visual) = open_records(cx, dir.path(), &records, None);
+    press(&mut visual, "j j");
+    let id = format!("{}-content", super::inspector::block_id(&command));
+    let top = |visual: &mut VisualTestContext| {
+        visual.update(|window, cx| {
+            window.render_frame(cx);
+            window.find(id.clone()).bounds().origin.y
+        })
+    };
+    let before = top(&mut visual);
+    // Near the block's top: its center lies below the window.
+    visual.update(|window, cx| {
+        let bounds = window.find(id.clone()).bounds();
+        let position = bounds.origin + gpui_kit::point(gpui_kit::px(20.), gpui_kit::px(20.));
+        window.dispatch_event(
+            gpui_kit::MouseMoveEvent {
+                position,
+                ..Default::default()
+            }
+            .to_platform_input(),
+            cx,
+        );
+        window.dispatch_event(
+            gpui_kit::ScrollWheelEvent {
+                position,
+                delta: gpui_kit::ScrollDelta::Pixels(gpui_kit::point(
+                    gpui_kit::px(0.),
+                    gpui_kit::px(-200.),
+                )),
+                ..Default::default()
+            }
+            .to_platform_input(),
+            cx,
+        );
+    });
+    settle(&mut visual);
+    assert!(top(&mut visual) < before, "the inspector did not scroll");
+}
+
+#[gpui_kit::test]
+fn dragging_over_a_block_selects_text_to_copy(cx: &mut TestAppContext) {
+    use gpui_kit::test::TestWindowExt as _;
+
+    let dir = tempfile::tempdir().unwrap();
+    let (records, command) = long_call();
+    let (_viewer, mut visual) = open_records(cx, dir.path(), &records, None);
+    press(&mut visual, "j j");
+    let id = format!("{}-content", super::inspector::block_id(&command));
+    visual.update(|window, cx| {
+        window.render_frame(cx);
+        let bounds = window.find(id.clone()).bounds();
+        let from = bounds.origin + gpui_kit::point(gpui_kit::px(12.), gpui_kit::px(14.));
+        window.drag(
+            from,
+            from + gpui_kit::point(gpui_kit::px(120.), gpui_kit::px(40.)),
+            cx,
+        );
+        window.press("cmd-c", cx);
+    });
+    let copied = clipboard(&mut visual).unwrap_or_default();
+    assert!(copied.starts_with("echo line 0"), "copied {copied:?}");
 }
