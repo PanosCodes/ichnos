@@ -5,6 +5,8 @@ scrolling the terminal. Ichnos logs every prompt, tool call, subagent and reply 
 shows them as a live timeline in a native Mac app. You can see where the time went and why
 something failed, and you can replay a session to look at any moment in it.
 
+![The Ichnos viewer: a session's tool calls and model steps in the tree view, with a failed Bash call's input and error open in the inspector](docs/viewer.png)
+
 Everything stays in `~/.ichnos` on your machine. There's no server and no account.
 
 It's early (0.1), so the log format may still change.
