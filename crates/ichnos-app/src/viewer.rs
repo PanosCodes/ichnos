@@ -876,6 +876,8 @@ impl Render for Viewer {
             .bg(color(theme::BG))
             .text_color(color(theme::FG))
             .text_size(px(theme::FS_BASE))
+            // Lets the inspector's text blocks be selected with the mouse and copied.
+            .child(gpui_kit::base::TextSelectionLayer)
             .child(self.render_toolbar(window, cx))
             .child(self.render_replay(cx))
             .child(main)
