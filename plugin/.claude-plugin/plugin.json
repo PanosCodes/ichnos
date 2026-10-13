@@ -1,7 +1,7 @@
 {
   "name": "ichnos",
   "version": "0.1.0",
-  "description": "Asks the model, after each turn, for its own account of the turn when a debug profile is set, and hands it to Ichnos",
+  "description": "Tells Ichnos when a turn was interrupted, and asks the model, after each turn, for its own account of the turn when a debug profile is set",
   "author": {
     "name": "Panos Dalitsouris"
   },
