@@ -25,3 +25,11 @@ pub const DEFAULT_DIR_IN_HOME: &str = ".ichnos";
 pub fn default_data_dir() -> Option<std::path::PathBuf> {
     std::env::var_os("HOME").map(|home| std::path::PathBuf::from(home).join(DEFAULT_DIR_IN_HOME))
 }
+
+/// An epoch-millisecond moment in local time, formatted with `chrono`'s `format`; `None` when it
+/// is out of range.
+#[must_use]
+pub fn local_time(ms: i64, format: &str) -> Option<String> {
+    chrono::DateTime::from_timestamp_millis(ms)
+        .map(|at| at.with_timezone(&chrono::Local).format(format).to_string())
+}

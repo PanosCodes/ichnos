@@ -30,8 +30,7 @@ impl Viewer {
         let project = project_of(&cwd);
         let when = current
             .and_then(|s| i64::try_from(s.mtime_ms()).ok())
-            .and_then(chrono::DateTime::from_timestamp_millis)
-            .map(|at| at.with_timezone(&chrono::Local).format("%H:%M").to_string())
+            .and_then(|ms| ichnos_core::local_time(ms, "%H:%M"))
             .unwrap_or_default();
         let picker_label = self.session.as_ref().map_or_else(
             || "no session".to_owned(),
