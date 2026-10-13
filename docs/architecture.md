@@ -111,18 +111,21 @@ the hook processes of one session and the viewer write and read the same file at
    hook names are the Ichnos event names, so this is mostly field by field. Subagent calls carry
    `agent_id` / `agent_type`, so each subagent becomes its own lane. `tool_fields.rs` adds the
    tool fields. `ichnos import claude-code --tool-fields` adds them to sessions recorded before.
-3. Hooks don't carry the model's text, so the adapter also reads the lines added to the session's
+3. Claude Code runs no `Stop` hook for a turn the user interrupts, so the plugin (see "Debug
+   accounts") logs that `Stop` itself, with `extra.interrupted`; otherwise the turn would read as
+   running until the next prompt.
+4. Hooks don't carry the model's text, so the adapter also reads the lines added to the session's
    transcript since its last run (`transcript.rs`) and turns each assistant line into an
    `AssistantMessage` event. Its read offset lives in `adapter_state`, so concurrent hook runs
    never log a line twice.
-4. `log::Logger` fills in what the producer may leave out (time, the main agent), clips long
+5. `log::Logger` fills in what the producer may leave out (time, the main agent), clips long
    fields, pairs a `PostToolUse` with its `PreToolUse` to set `status` and `duration_ms`, moves any
    debug account into place, and appends the record.
-5. On `SessionStart`, the CLI also spawns `ichnos open <session>` detached (unless
+6. On `SessionStart`, the CLI also spawns `ichnos open <session>` detached (unless
    `ICHNOS_NO_OPEN` is set).
 
-`ichnos log` is steps 4–5 for producers that already write Ichnos events.
-`ichnos import claude-code <session>` reruns step 3 over a whole transcript, for sessions logged
+`ichnos log` is steps 5–6 for producers that already write Ichnos events.
+`ichnos import claude-code <session>` reruns step 4 over a whole transcript, for sessions logged
 before the adapter read transcripts.
 
 ## Reading: from row to pixels

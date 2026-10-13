@@ -121,6 +121,7 @@ Fields of `record`:
 | `duration_ms`, `response`, `error` | on `PostToolUse` / `PostToolUseFailure` |
 | `prompt` | the user's prompt (`UserPromptSubmit`) |
 | `extra.last_assistant_message` | the reply that ended the turn (`Stop`, `SubagentStop`) |
+| `extra.interrupted` | `true` on a `Stop` when the user interrupted the turn |
 | `extra.cwd`, `extra.source` | on lifecycle events |
 | `label` | the one line a row shows for a tool call or `Notification` (its command, path, …) |
 | `files` | `[{"path", "op"}]` on `PreToolUse`: files the call read (`op` `read`) or wrote (`write`) |

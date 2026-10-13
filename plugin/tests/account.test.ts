@@ -3,6 +3,7 @@ import { describe, expect, test } from 'claude-code/testing'
 
 import { ask, check, event, extract } from '../hooks/account'
 import { profiles } from '../hooks/profiles'
+import { interrupted } from '../hooks/register'
 
 const skills = profiles.skills!
 const quiet = '{"v":2,"s":{"c":[],"s":[],"g":[],"u":[]},"r":{"c":[]},"o":{"s":"done","r":[],"u":[],"k":[]}}'
@@ -81,4 +82,12 @@ test('the event names the session, the turn and the account', () => {
   const line = event('s1', 't1', { v: 2 })
   expect(line.endsWith('\n')).toBe(true)
   expect(JSON.parse(line)).toEqual({ event: 'Debug', session_id: 's1', extra: { turn_id: 't1', debug: { v: 2 } } })
+})
+
+test('an interrupted turn ends with a Stop that says so', () => {
+  expect(JSON.parse(interrupted('s1', 'half done'))).toEqual({
+    event: 'Stop',
+    session_id: 's1',
+    extra: { interrupted: true, last_assistant_message: 'half done' },
+  })
 })

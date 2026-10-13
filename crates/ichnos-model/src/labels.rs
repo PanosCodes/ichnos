@@ -226,6 +226,9 @@ fn node_label(node: &Node, summaries: &Summaries, model: &SessionModel) -> Label
         } => {
             let ai = summary(Some(prompt), summaries);
             let outcome = stop.as_ref().map_or_else(String::new, |stop| {
+                if stop.extra("interrupted") == Some(&Value::Bool(true)) {
+                    return "interrupted".to_owned();
+                }
                 summary(Some(stop), summaries)
                     .map_or_else(|| last_message(Some(stop)), str::to_owned)
             });
@@ -307,7 +310,7 @@ pub(crate) mod tests {
 
     use super::*;
     use crate::model::build_session;
-    use crate::model::tests::{DONE, data};
+    use crate::model::tests::{DONE, LIVE, data};
 
     #[test]
     fn durations_and_token_counts_read_naturally() {
@@ -387,5 +390,23 @@ pub(crate) mod tests {
             (summarized.text.as_str(), summarized.ai),
             ("Ran the tests; they failed.", true)
         );
+    }
+
+    #[test]
+    fn an_interrupted_turn_ends_at_its_stop_and_says_so() {
+        let events = [
+            json!({"event": "UserPromptSubmit", "epoch_ms": 1, "agent_id": "main", "prompt": "go"}),
+            json!({"event": "PreToolUse", "epoch_ms": 2, "tool_use_id": "t1",
+                   "tool_name": "AskUserQuestion", "agent_id": "main"}),
+            json!({"event": "Stop", "epoch_ms": 3, "agent_id": "main",
+                   "extra": {"interrupted": true, "last_assistant_message": "half done"}}),
+        ];
+        let model = build_session(&data(&events, &[]), LIVE);
+        let turn = model.node(model.turns()[0]);
+        assert!(!turn.running(), "the Stop ends the turn even while live");
+        let sub = label(turn, &Summaries::new(), &model).sub.unwrap();
+        assert!(sub.starts_with("→ interrupted\n"), "{sub:?}");
+        let t1 = model.node(model.find(&Key::from("t1")).unwrap());
+        assert_eq!(t1.status(), Some(ichnos_core::event::Status::Unfinished));
     }
 }

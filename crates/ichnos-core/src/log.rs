@@ -6,7 +6,8 @@
 //! reads. A tool event may also carry the tool fields that [`crate::event`] describes (`label`,
 //! `files`, `skill`, `todos`, `spawned_agent`); they are stored as they are, never clipped.
 //! Where it came from doesn't matter here: adapters translate their tool's payloads into this
-//! format, and anything else can write it directly.
+//! format, and anything else can write it directly. A `Stop` with `extra.interrupted: true` ends
+//! a turn the user interrupted.
 //!
 //! [`Logger::log`] fills in what the producer may leave out (time, the main agent), clips long
 //! fields, pairs a tool call's `PostToolUse` with its `PreToolUse` for `status` and `duration_ms`,
