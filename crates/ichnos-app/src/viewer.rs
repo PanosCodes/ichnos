@@ -2,8 +2,11 @@
 //! replay strip, main view and inspector.
 
 mod ask_panel;
+mod copy;
 mod graph;
 mod inspector;
+mod keys;
+mod polling;
 mod replay;
 mod switcher;
 mod table;
@@ -14,22 +17,21 @@ mod tree;
 
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex, PoisonError};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use gpui_kit::TestSupportExt as _;
 use gpui_kit::component::input::{InputEvent, InputState};
-use gpui_kit::component::menu::{ContextMenuExt as _, PopupMenuItem};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
-    AnyElement, AnyWindowHandle, App, AppContext as _, ClipboardItem, Context, Entity, FocusHandle,
-    Focusable, InteractiveElement as _, IntoElement, KeyBinding, Menu, MenuItem, MouseButton,
-    MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement as _, Render, ScrollStrategy,
-    SharedString, StatefulInteractiveElement as _, Styled as _, Subscription,
-    UniformListScrollHandle, Window, actions, div, px,
+    AnyElement, AnyWindowHandle, App, AppContext as _, Context, Entity, FocusHandle, Focusable,
+    InteractiveElement as _, IntoElement, MouseButton, MouseDownEvent, MouseMoveEvent,
+    MouseUpEvent, ParentElement as _, Render, ScrollStrategy, SharedString,
+    StatefulInteractiveElement as _, Styled as _, Subscription, UniformListScrollHandle, Window,
+    div, px,
 };
 use ichnos_core::catalog::{Catalog, SessionEntry};
-use ichnos_core::instance::{Command, Listener};
+use ichnos_core::instance::Listener;
 use ichnos_core::one_line;
 use ichnos_core::store::SessionId;
 use ichnos_model::call::Key;
@@ -39,14 +41,18 @@ use ichnos_model::session_data::SessionData;
 use ichnos_search::Search;
 
 use self::ask_panel::AskPanel;
+use self::keys::{
+    FocusFilter, NextError, OpenSettings, ShowGraph, ShowTable, ShowTree, StepBack, StepForward,
+    ToggleHelp, TogglePanel, TogglePlay, ToggleSwitcher, ZoomIn, ZoomOut, ZoomReset,
+};
+pub use self::keys::{bind_keys, set_menus};
 use self::switcher::{Switcher, SwitcherEvent};
 use crate::live::{Connection, LiveSession};
 use crate::prefs::Prefs;
-use crate::present::pretty;
 use crate::summarizer::Summarizer;
 use crate::summarizers::{Choice, Probe};
 use crate::theme::{self, color};
-use crate::view_state::{TableRow, TreeRow, View, ViewState, agent_reference};
+use crate::view_state::{TableRow, TreeRow, View, ViewState};
 
 /// How often the shown session's database is polled; also one replay step while playing.
 const POLL_INTERVAL: Duration = Duration::from_millis(250);
@@ -70,98 +76,6 @@ const COPY_ROW: &str = "copy-row";
 /// Key context of the viewer; single-key shortcuts only apply outside text inputs.
 const CONTEXT: &str = "IchnosViewer";
 const SHORTCUTS: &str = "IchnosViewer && !Input";
-
-actions!(
-    ichnos,
-    [
-        /// Select the next row.
-        MoveDown,
-        /// Select the previous row.
-        MoveUp,
-        /// Expand or collapse the selected row.
-        ToggleRow,
-        /// Jump to the next failed call.
-        NextError,
-        /// Start or pause replay.
-        TogglePlay,
-        /// Move the replay cursor back one moment.
-        StepBack,
-        /// Move the replay cursor forward one moment.
-        StepForward,
-        /// Show or hide the right-hand panel.
-        TogglePanel,
-        /// Open or close the keyboard shortcuts overlay.
-        ToggleHelp,
-        /// Show the tree.
-        ShowTree,
-        /// Show the graph.
-        ShowGraph,
-        /// Show the table.
-        ShowTable,
-        /// Focus the filter box.
-        FocusFilter,
-        /// Open or close the session switcher.
-        ToggleSwitcher,
-        /// Open the settings window.
-        OpenSettings,
-        /// Close the open overlay.
-        Dismiss,
-        /// Zoom the graph in.
-        ZoomIn,
-        /// Zoom the graph out.
-        ZoomOut,
-        /// Show the graph at actual size.
-        ZoomReset,
-        /// Quit the app.
-        Quit,
-    ]
-);
-
-/// Register the viewer's keyboard shortcuts.
-pub fn bind_keys(cx: &mut App) {
-    cx.bind_keys([
-        KeyBinding::new("j", MoveDown, Some(SHORTCUTS)),
-        KeyBinding::new("down", MoveDown, Some(SHORTCUTS)),
-        KeyBinding::new("k", MoveUp, Some(SHORTCUTS)),
-        KeyBinding::new("up", MoveUp, Some(SHORTCUTS)),
-        KeyBinding::new("enter", ToggleRow, Some(SHORTCUTS)),
-        KeyBinding::new("e", NextError, Some(SHORTCUTS)),
-        KeyBinding::new("space", TogglePlay, Some(SHORTCUTS)),
-        KeyBinding::new("left", StepBack, Some(SHORTCUTS)),
-        KeyBinding::new("right", StepForward, Some(SHORTCUTS)),
-        KeyBinding::new("cmd-\\", TogglePanel, Some(CONTEXT)),
-        KeyBinding::new("?", ToggleHelp, Some(SHORTCUTS)),
-        KeyBinding::new("shift-/", ToggleHelp, Some(SHORTCUTS)),
-        KeyBinding::new("t", ShowTree, Some(SHORTCUTS)),
-        KeyBinding::new("g", ShowGraph, Some(SHORTCUTS)),
-        KeyBinding::new("b", ShowTable, Some(SHORTCUTS)),
-        KeyBinding::new("/", FocusFilter, Some(SHORTCUTS)),
-        KeyBinding::new("cmd-,", OpenSettings, Some(CONTEXT)),
-        KeyBinding::new("escape", Dismiss, Some(SHORTCUTS)),
-        KeyBinding::new("cmd-k", ToggleSwitcher, Some(CONTEXT)),
-        KeyBinding::new("ctrl-k", ToggleSwitcher, Some(CONTEXT)),
-        KeyBinding::new("cmd-=", ZoomIn, Some(SHORTCUTS)),
-        KeyBinding::new("cmd-+", ZoomIn, Some(SHORTCUTS)),
-        KeyBinding::new("cmd--", ZoomOut, Some(SHORTCUTS)),
-        KeyBinding::new("cmd-0", ZoomReset, Some(SHORTCUTS)),
-        KeyBinding::new("cmd-q", Quit, None),
-    ]);
-    crate::settings::bind_keys(cx);
-    cx.on_action(|_: &Quit, cx| cx.quit());
-}
-
-/// The app menu: "Settings…" opens the settings screen, and "Quit" leaves.
-pub fn set_menus(cx: &mut App) {
-    cx.set_menus([Menu {
-        name: "Ichnos".into(),
-        items: vec![
-            MenuItem::action("Settings…", OpenSettings),
-            MenuItem::separator(),
-            MenuItem::action("Quit Ichnos", Quit),
-        ],
-        disabled: false,
-    }]);
-}
 
 /// Where the viewer reads from and what it starts on.
 #[derive(Debug)]
@@ -386,155 +300,6 @@ impl Viewer {
         self.built_from = 0;
         self.refresh();
         cx.notify();
-    }
-
-    fn poll_sessions(&mut self, cx: &mut Context<Self>) {
-        let catalog = Arc::clone(&self.catalog);
-        cx.spawn(async move |this, cx| {
-            loop {
-                let catalog = Arc::clone(&catalog);
-                let listed = cx
-                    .background_executor()
-                    .spawn(async move {
-                        catalog
-                            .lock()
-                            .unwrap_or_else(PoisonError::into_inner)
-                            .list()
-                    })
-                    .await;
-                let updated = this.update(cx, |viewer, cx| {
-                    if let Ok(sessions) = listed {
-                        viewer.on_sessions(sessions, cx);
-                    }
-                });
-                if updated.is_err() {
-                    break;
-                }
-                cx.background_executor().timer(SESSIONS_POLL).await;
-            }
-        })
-        .detach();
-    }
-
-    fn on_sessions(&mut self, sessions: Vec<SessionEntry>, cx: &mut Context<Self>) {
-        self.sessions = sessions;
-        let newest = self.sessions.first().map(|s| s.id().clone());
-        if let Some(newest) = newest
-            && (self.follow_newest || self.session.is_none())
-        {
-            self.show_session(newest, cx);
-        }
-        if let Some(switcher) = &self.switcher {
-            let sessions = self.sessions.clone();
-            switcher.update(cx, |switcher, cx| switcher.set_sessions(sessions, cx));
-        }
-        cx.notify();
-    }
-
-    fn poll_feed(window: &mut Window, cx: &mut Context<Self>) {
-        cx.spawn_in(window, async move |this, cx| {
-            loop {
-                cx.background_executor().timer(POLL_INTERVAL).await;
-                let Ok(feed) = this.update(cx, |viewer, _| {
-                    let live = viewer.live.as_mut()?;
-                    live.reopen(&viewer.sessions_dir);
-                    Some((live.id().clone(), live.feed()?))
-                }) else {
-                    break;
-                };
-                let polled = match feed {
-                    Some((id, feed)) => {
-                        let polled = cx
-                            .background_executor()
-                            .spawn(async move { crate::live::poll(&feed) })
-                            .await;
-                        Some((id, polled))
-                    }
-                    None => None,
-                };
-                if this
-                    .update_in(cx, |viewer, window, cx| {
-                        viewer.take_commands(window, cx);
-                        viewer.on_tick(polled, cx);
-                    })
-                    .is_err()
-                {
-                    break;
-                }
-            }
-        })
-        .detach();
-    }
-
-    /// Act on the requests `ichnos open` and `ichnos stop` sent since the last poll.
-    fn take_commands(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        while let Some(command) = self.listener.as_ref().and_then(Listener::try_recv) {
-            match command {
-                Command::Show { session, view } => {
-                    if session.is_some() || !self.follow_newest {
-                        self.open_session(session, view, cx);
-                    } else if let Some(view) = view {
-                        self.set_view(view, cx);
-                    }
-                    window.activate_window();
-                }
-                Command::Ping => {}
-                Command::Quit => cx.quit(),
-            }
-        }
-    }
-
-    /// One poll's result, plus the clock: playback steps and running durations.
-    fn on_tick(
-        &mut self,
-        polled: Option<(
-            SessionId,
-            Result<Vec<ichnos_model::feed::Item>, ichnos_core::store::StoreError>,
-        )>,
-        cx: &mut Context<Self>,
-    ) {
-        let mut dirty = false;
-        if let (Some((id, polled)), Some(live)) = (polled, self.live.as_mut())
-            && live.id() == &id
-        {
-            let was = live.connection();
-            dirty |= live.apply(polled);
-            dirty |= was != live.connection();
-        }
-        self.polls += 1;
-        if self.state.playing() {
-            let data = self.data();
-            let all = moments(data.events(), data.steps());
-            self.state.step(&all, true);
-            dirty = true;
-        }
-        let ticking = self.state.replay_at().is_none()
-            && self.connection() == Some(Connection::Live)
-            && self
-                .model
-                .turns()
-                .iter()
-                .any(|&turn| self.model.node(turn).running());
-        if ticking && self.polls.is_multiple_of(POLLS_PER_TICK) {
-            dirty = true;
-        }
-        if self
-            .copied
-            .as_ref()
-            .is_some_and(|(_, at)| at.elapsed() >= COPIED_FOR)
-        {
-            self.copied = None;
-            dirty = true;
-        }
-        let fresh = self
-            .seen
-            .values()
-            .flatten()
-            .any(|at| at.elapsed() < FRESH + POLL_INTERVAL);
-        if dirty || fresh {
-            self.refresh();
-            cx.notify();
-        }
     }
 
     /// The shown session's data.
@@ -788,79 +553,6 @@ impl Viewer {
         cx.notify();
     }
 
-    fn copy(&mut self, what: impl Into<SharedString>, text: String, cx: &mut Context<Self>) {
-        cx.write_to_clipboard(ClipboardItem::new_string(text));
-        self.copied = Some((what.into(), Instant::now()));
-        cx.notify();
-    }
-
-    /// Copy event `row_id` of the shown session as an `/ichnos` reference to give an agent.
-    fn copy_for_agent(&mut self, row_id: i64, cx: &mut Context<Self>) {
-        if let Some(session) = &self.session {
-            let text = agent_reference(session, row_id);
-            self.copy(FOR_AGENT, text, cx);
-        }
-    }
-
-    /// Copy row `key`'s events as pretty JSON, as the inspector's "raw" does.
-    fn copy_row(&mut self, key: &Key, cx: &mut Context<Self>) {
-        let events = match self.model.find(key) {
-            Some(id) => self.model.node(id).raw_data(),
-            None => self
-                .table
-                .iter()
-                .find(|row| row.call.key() == key)
-                .map(|row| {
-                    row.call
-                        .events()
-                        .iter()
-                        .map(|event| serde_json::from_str(event.json()).unwrap_or_default())
-                        .collect()
-                })
-                .unwrap_or_default(),
-        };
-        self.copy(COPY_ROW, pretty(&serde_json::Value::Array(events)), cx);
-    }
-
-    /// `row` with a right-click menu: "Copy" copies row `key`'s events, and "Copy for agent"
-    /// copies event `row_id` for an agent when the row names a single event.
-    fn with_row_menu(
-        row: impl IntoElement + 'static,
-        key: Key,
-        row_id: Option<i64>,
-        cx: &Context<Self>,
-    ) -> AnyElement {
-        let viewer = cx.entity().downgrade();
-        // Its own id per row: without one every row shares the same menu state.
-        div()
-            .id(SharedString::from(format!("row-menu-{key}")))
-            .w_full()
-            .child(row)
-            .context_menu(move |menu, _, _| {
-                let (copy, for_agent, key) = (viewer.clone(), viewer.clone(), key.clone());
-                let menu = menu.item(PopupMenuItem::new("Copy").on_click(move |_, _, cx| {
-                    copy.update(cx, |this, cx| this.copy_row(&key, cx)).ok();
-                }));
-                let Some(row_id) = row_id else {
-                    return menu;
-                };
-                menu.item(
-                    PopupMenuItem::new("Copy for agent").on_click(move |_, _, cx| {
-                        for_agent
-                            .update(cx, |this, cx| this.copy_for_agent(row_id, cx))
-                            .ok();
-                    }),
-                )
-            })
-            .into_any_element()
-    }
-
-    fn is_copied(&self, what: &str) -> bool {
-        self.copied
-            .as_ref()
-            .is_some_and(|(copied, _)| copied == what)
-    }
-
     fn toggle_switcher(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.switcher.take().is_some() {
             self.focus.focus(window, cx);
@@ -920,45 +612,6 @@ impl Viewer {
     ) {
         if self.state.view() == View::Graph {
             change(self.state.graph_pan_mut());
-            cx.notify();
-        }
-    }
-
-    fn on_dismiss(&mut self, _: &Dismiss, window: &mut Window, cx: &mut Context<Self>) {
-        self.switcher = None;
-        self.ask = None;
-        self.help = false;
-        self.focus.focus(window, cx);
-        cx.notify();
-    }
-
-    fn on_move_down(&mut self, _: &MoveDown, _: &mut Window, cx: &mut Context<Self>) {
-        let order = self.order();
-        self.state.move_selection(&order, 1);
-        self.scroll_to_pending();
-        cx.notify();
-    }
-
-    fn on_move_up(&mut self, _: &MoveUp, _: &mut Window, cx: &mut Context<Self>) {
-        let order = self.order();
-        self.state.move_selection(&order, -1);
-        self.scroll_to_pending();
-        cx.notify();
-    }
-
-    fn on_toggle_row(&mut self, _: &ToggleRow, _: &mut Window, cx: &mut Context<Self>) {
-        let Some(id) = self.state.selected().and_then(|key| self.model.find(key)) else {
-            return;
-        };
-        self.state.toggle(&self.model, id);
-        self.refresh();
-        cx.notify();
-    }
-
-    fn on_next_error(&mut self, _: &NextError, _: &mut Window, cx: &mut Context<Self>) {
-        if self.state.next_error(&self.model).is_some() {
-            self.refresh();
-            self.scroll_to_pending();
             cx.notify();
         }
     }
