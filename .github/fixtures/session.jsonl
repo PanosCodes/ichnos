@@ -1,0 +1,15 @@
+{"event":"SessionStart","session_id":"ci-shots","extra":{"cwd":"/work/ichnos","source":"startup"}}
+{"event":"UserPromptSubmit","session_id":"ci-shots","prompt":"Why does the release build fail?"}
+{"event":"AssistantMessage","session_id":"ci-shots","message_id":"m1","text":"Let me look at the build output first."}
+{"event":"PreToolUse","session_id":"ci-shots","tool_use_id":"t1","tool_name":"Bash","input":{"command":"cargo build --release"},"label":"cargo build --release"}
+{"event":"PostToolUseFailure","session_id":"ci-shots","tool_use_id":"t1","tool_name":"Bash","error":"error[E0425]: cannot find value `cfg` in this scope"}
+{"event":"PreToolUse","session_id":"ci-shots","tool_use_id":"t2","tool_name":"Read","input":{"file_path":"/work/ichnos/src/main.rs"},"label":"src/main.rs","files":["/work/ichnos/src/main.rs"]}
+{"event":"PostToolUse","session_id":"ci-shots","tool_use_id":"t2","tool_name":"Read","response":{"lines":120}}
+{"event":"SubagentStart","session_id":"ci-shots","agent_id":"a1","agent_type":"Explore"}
+{"event":"PreToolUse","session_id":"ci-shots","agent_id":"a1","tool_use_id":"t3","tool_name":"Grep","input":{"pattern":"cfg"},"label":"cfg"}
+{"event":"PostToolUse","session_id":"ci-shots","agent_id":"a1","tool_use_id":"t3","tool_name":"Grep","response":{"matches":3}}
+{"event":"SubagentStop","session_id":"ci-shots","agent_id":"a1","agent_type":"Explore"}
+{"event":"PreToolUse","session_id":"ci-shots","tool_use_id":"t4","tool_name":"Edit","input":{"file_path":"/work/ichnos/src/main.rs"},"label":"src/main.rs","files":["/work/ichnos/src/main.rs"]}
+{"event":"PostToolUse","session_id":"ci-shots","tool_use_id":"t4","tool_name":"Edit","response":{"ok":true}}
+{"event":"AssistantMessage","session_id":"ci-shots","message_id":"m2","text":"Fixed: `cfg` was used as a value; it is now `cfg!(debug_assertions)`."}
+{"event":"Stop","session_id":"ci-shots"}

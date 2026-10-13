@@ -21,3 +21,32 @@ jobs:
       - run: cargo fmt --check
       - run: cargo clippy --all-targets -- -D warnings
       - run: cargo test
+
+  plugin:
+    # The plugin's hook tests need only the Claude Code CLI, no login.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm install -g @anthropic-ai/claude-code
+      - run: claude plugin test plugin
+
+  shots:
+    # Renders every view headlessly from a fixture session and keeps the PNGs for review.
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo run -p ichnos -- --dir "$RUNNER_TEMP/ichnos" log --no-open < .github/fixtures/session.jsonl
+      - run: cargo run -p ichnos-app --features screenshots -- ci-shots
+        env:
+          ICHNOS_DIR: ${{ runner.temp }}/ichnos
+          ICHNOS_SHOTS: shots
+      - run: test "$(ls shots/*.png | wc -l)" -gt 0
+      - uses: actions/upload-artifact@v4
+        with:
+          name: shots
+          path: shots/*.png
