@@ -10,8 +10,8 @@ use serde_json::{Value, json};
 
 use super::{Options, Viewer, bind_keys};
 use crate::prefs::Prefs;
+use crate::summarizer::Summarizer;
 use crate::summarizers::{Availability, Choice};
-use crate::summary_host::SummaryHost;
 use crate::view_state::View;
 
 /// Claude Code runs here and Apple Foundation Models doesn't, without starting either.
@@ -79,7 +79,7 @@ fn open(cx: &mut TestAppContext, data_dir: &Path) -> (Entity<Viewer>, VisualTest
 fn open_with(
     cx: &mut TestAppContext,
     data_dir: &Path,
-    summaries: Option<SummaryHost>,
+    summaries: Option<Summarizer>,
 ) -> (Entity<Viewer>, VisualTestContext) {
     record(data_dir, "s1", &session());
     cx.update(|cx| {
@@ -460,7 +460,7 @@ fn the_summarizer_dropdown_switches_and_remembers_the_summarizer(cx: &mut TestAp
     let dir = tempfile::tempdir().unwrap();
     let sessions = dir.path().join(ichnos_core::SESSIONS_DIR);
     // A paused summarizer: the test never asks a real model.
-    let host = SummaryHost::start(sessions, dir.path().to_owned(), None).unwrap();
+    let host = Summarizer::start(sessions, dir.path().to_owned(), None).unwrap();
     let (viewer, _visual) = open_with(cx, dir.path(), Some(host));
     let (_settings, settings) =
         cx.add_window_view(|window, cx| crate::settings::Settings::new(viewer.clone(), window, cx));

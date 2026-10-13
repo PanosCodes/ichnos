@@ -1,13 +1,15 @@
 //! Plain-language summaries of agent log entries, written by a language model.
 //!
-//! One background task summarizes the sessions someone is watching. It pairs Pre/Post tool events
+//! One background thread summarizes the sessions someone is watching. It pairs Pre/Post tool events
 //! into one entry (like the viewer does), skips calls that are still running and model messages,
 //! sends the rest to the [`Llm`] command in batches (newest first, so the live end fills in first)
 //! and stores the sentences in the database, where the viewer's feed picks them up.
 
 use std::collections::HashMap;
+use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, PoisonError};
+use std::thread;
 use std::time::Duration;
 
 use serde_json::{Map, Value};
@@ -49,9 +51,6 @@ pub enum SummarizeError {
 
     #[error("no JSON object in the model's reply: {0}")]
     NoJson(String),
-
-    #[error("the database task panicked")]
-    Join(#[from] tokio::task::JoinError),
 }
 
 /// A model the summarizer asks, with how many entries fit in one request.
@@ -88,12 +87,19 @@ pub struct Watch {
 }
 
 impl Summarizer {
-    /// Start the worker on the current tokio runtime, asking `model` for summaries and storing
-    /// them in each session's database inside the sessions folder `dir`. With `model` `None` it
-    /// waits until [`Summarizer::set_model`] names one. Failures go to
+    /// Start the worker on a thread of its own, asking `model` for summaries and storing them in
+    /// each session's database inside the sessions folder `dir`. With `model` `None` it waits
+    /// until [`Summarizer::set_model`] names one. Failures go to
     /// `<error_log_dir>/hook-errors.log`.
-    #[must_use]
-    pub fn start(dir: PathBuf, error_log_dir: PathBuf, model: Option<SummaryModel>) -> Self {
+    ///
+    /// # Errors
+    ///
+    /// Returns the [`io::Error`] when the thread can't start.
+    pub fn start(
+        dir: PathBuf,
+        error_log_dir: PathBuf,
+        model: Option<SummaryModel>,
+    ) -> io::Result<Self> {
         let summarizer = Self {
             inner: Arc::new(Inner {
                 dir,
@@ -102,8 +108,11 @@ impl Summarizer {
                 watchers: Mutex::new(HashMap::new()),
             }),
         };
-        tokio::spawn(summarizer.clone().run());
-        summarizer
+        let worker = summarizer.clone();
+        thread::Builder::new()
+            .name("ichnos-summarizer".to_owned())
+            .spawn(move || worker.run())?;
+        Ok(summarizer)
     }
 
     /// Summarize `session` until the returned guard is dropped.
@@ -138,13 +147,13 @@ impl Summarizer {
             .unwrap_or_else(PoisonError::into_inner)
     }
 
-    async fn run(self) {
+    fn run(self) {
         let mut attempts: HashMap<i64, u32> = HashMap::new();
         let mut last: Option<SummaryModel> = None;
         loop {
             // Cloned once per round, so a swap lands between requests, never in one.
             let Some(model) = self.model().clone() else {
-                tokio::time::sleep(IDLE_PAUSE).await;
+                thread::sleep(IDLE_PAUSE);
                 continue;
             };
             if last.as_ref() != Some(&model) {
@@ -155,7 +164,7 @@ impl Summarizer {
             let mut worked = false;
             for session in sessions {
                 let db = session.db_path(&self.inner.dir);
-                match summarize_next_batch(&model, &db, &mut attempts).await {
+                match summarize_next_batch(&model, &db, &mut attempts) {
                     Ok(did_work) => worked |= did_work,
                     // Keep the worker alive; the viewer just lacks summaries.
                     Err(err) => {
@@ -167,7 +176,7 @@ impl Summarizer {
                 }
             }
             if !worked {
-                tokio::time::sleep(IDLE_PAUSE).await;
+                thread::sleep(IDLE_PAUSE);
             }
         }
     }
@@ -195,20 +204,14 @@ struct Entry {
 }
 
 /// Summarize the newest batch of unsummarized entries; returns whether there was one.
-async fn summarize_next_batch(
+fn summarize_next_batch(
     model: &SummaryModel,
     db: &Path,
     attempts: &mut HashMap<i64, u32>,
 ) -> Result<bool, SummarizeError> {
-    let db_path = db.to_owned();
-    let (entries, done) = tokio::task::spawn_blocking(move || -> Result<_, SummarizeError> {
-        let store = Store::open(&db_path)?;
-        Ok((
-            read_entries(&store.events_after(0)?),
-            store.summarized_event_ids()?,
-        ))
-    })
-    .await??;
+    let mut store = Store::open(db)?;
+    let entries = read_entries(&store.events_after(0)?);
+    let done = store.summarized_event_ids()?;
 
     let todo: Vec<Entry> = entries
         .into_iter()
@@ -224,7 +227,7 @@ async fn summarize_next_batch(
     let mut fail = |event_id: i64| *attempts.entry(event_id).or_insert(0) += 1;
 
     let fields: Vec<&Value> = batch.iter().map(|entry| &entry.fields).collect();
-    let replies = match ask(&model.llm, &fields).await {
+    let replies = match ask(&model.llm, &fields) {
         Ok(replies) => replies,
         Err(err) => {
             for entry in batch {
@@ -243,8 +246,7 @@ async fn summarize_next_batch(
             _ => fail(entry.event_id),
         }
     }
-    let db_path = db.to_owned();
-    tokio::task::spawn_blocking(move || Store::open(&db_path)?.add_summaries(&summaries)).await??;
+    store.add_summaries(&summaries)?;
     Ok(true)
 }
 
@@ -341,12 +343,12 @@ fn read_entries(rows: &[Row]) -> Vec<Entry> {
 }
 
 /// Ask the model for one sentence per entry; returns its JSON object of key -> sentence.
-async fn ask(llm: &Llm, batch: &[&Value]) -> Result<Map<String, Value>, SummarizeError> {
+fn ask(llm: &Llm, batch: &[&Value]) -> Result<Map<String, Value>, SummarizeError> {
     let prompt = format!(
         "Summarize these log entries:\n{}",
         serde_json::to_string_pretty(batch)?
     );
-    parse_reply(&llm.complete(SYSTEM_PROMPT, &prompt).await?)
+    parse_reply(&llm.complete(SYSTEM_PROMPT, &prompt)?)
 }
 
 /// The outermost JSON object in `text`, tolerating code fences or stray words around it.
@@ -366,16 +368,16 @@ mod tests {
 
     use super::*;
 
-    #[tokio::test]
-    async fn ask_sends_the_batch_and_parses_the_reply() {
+    #[test]
+    fn ask_sends_the_batch_and_parses_the_reply() {
         let llm = Llm::new(r#"cat >/dev/null; echo '{"1": "Listed files."}'"#);
         let entry = json!({"key": "1", "tool": "Bash"});
-        let reply = ask(&llm, &[&entry]).await.unwrap();
+        let reply = ask(&llm, &[&entry]).unwrap();
         assert_eq!(reply.get("1"), Some(&json!("Listed files.")));
     }
 
-    #[tokio::test]
-    async fn a_paused_summarizer_starts_once_given_a_model() {
+    #[test]
+    fn a_paused_summarizer_starts_once_given_a_model() {
         let dir = tempfile::tempdir().unwrap();
         let session: SessionId = "s1".parse().unwrap();
         let event_id = Store::open(&session.db_path(dir.path()))
@@ -394,9 +396,10 @@ mod tests {
                 .unwrap()
         };
 
-        let summarizer = Summarizer::start(dir.path().to_owned(), dir.path().to_owned(), None);
+        let summarizer =
+            Summarizer::start(dir.path().to_owned(), dir.path().to_owned(), None).unwrap();
         let _watch = summarizer.watch(session.clone());
-        tokio::time::sleep(IDLE_PAUSE + Duration::from_millis(200)).await;
+        thread::sleep(IDLE_PAUSE + Duration::from_millis(200));
         assert!(summaries().is_empty());
 
         summarizer.set_model(Some(SummaryModel {
@@ -409,7 +412,7 @@ mod tests {
             if summaries().contains(&event_id) {
                 return;
             }
-            tokio::time::sleep(Duration::from_millis(100)).await;
+            thread::sleep(Duration::from_millis(100));
         }
         panic!("no summary after the model was set");
     }

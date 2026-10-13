@@ -6,13 +6,12 @@
 //! (`--system-prompt "$ICHNOS_SYSTEM_PROMPT"`).
 
 use std::ffi::OsString;
-use std::io;
-use std::process::Stdio;
-use std::time::Duration;
+use std::io::{self, Read, Write as _};
+use std::process::{Command, Stdio};
+use std::thread;
+use std::time::{Duration, Instant};
 
 use thiserror::Error;
-use tokio::io::AsyncWriteExt;
-use tokio::process::Command;
 
 /// How long one command run may take before it is killed.
 pub const LLM_TIMEOUT: Duration = Duration::from_secs(120);
@@ -22,6 +21,9 @@ pub const SYSTEM_PROMPT_VAR: &str = "ICHNOS_SYSTEM_PROMPT";
 
 /// Characters of the command's stderr kept in an [`LlmError::Exit`].
 const STDERR_CHARS: usize = 500;
+
+/// How often a running command is checked for having exited.
+const EXIT_POLL: Duration = Duration::from_millis(50);
 
 /// Why the command gave no reply.
 #[derive(Debug, Error)]
@@ -77,7 +79,7 @@ impl Llm {
     ///
     /// Returns an [`LlmError`] when the command can't start, fails, or takes longer than
     /// [`LLM_TIMEOUT`].
-    pub async fn complete(&self, system: &str, prompt: &str) -> Result<String, LlmError> {
+    pub fn complete(&self, system: &str, prompt: &str) -> Result<String, LlmError> {
         let spawn_error = |source| LlmError::Spawn {
             command: self.command_line.clone(),
             source,
@@ -90,56 +92,81 @@ impl Llm {
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
-            .kill_on_drop(true)
             .spawn()
             .map_err(spawn_error)?;
-        if let Some(mut stdin) = child.stdin.take() {
+        // Each pipe gets a thread, so a long prompt or reply can't fill one while the other waits.
+        let mut stdin = child.stdin.take();
+        let prompt = prompt.to_owned();
+        let writer = thread::spawn(move || {
             stdin
-                .write_all(prompt.as_bytes())
-                .await
-                .map_err(spawn_error)?;
-        }
-        let output = tokio::time::timeout(LLM_TIMEOUT, child.wait_with_output())
-            .await
-            .map_err(|_| LlmError::Timeout {
-                command: self.command_line.clone(),
-            })?
-            .map_err(spawn_error)?;
-        if !output.status.success() {
+                .as_mut()
+                .map_or(Ok(()), |stdin| stdin.write_all(prompt.as_bytes()))
+        });
+        let stdout = read_all(child.stdout.take());
+        let stderr = read_all(child.stderr.take());
+        let deadline = Instant::now() + LLM_TIMEOUT;
+        let status = loop {
+            if let Some(status) = child.try_wait().map_err(spawn_error)? {
+                break status;
+            }
+            if Instant::now() >= deadline {
+                // Already gone or not killable: either way there is no reply to wait for.
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(LlmError::Timeout {
+                    command: self.command_line.clone(),
+                });
+            }
+            thread::sleep(EXIT_POLL);
+        };
+        if !status.success() {
             return Err(LlmError::Exit {
                 command: self.command_line.clone(),
-                status: output.status,
-                stderr: String::from_utf8_lossy(&output.stderr)
+                status,
+                stderr: String::from_utf8_lossy(&stderr.join().unwrap_or_default())
                     .trim()
                     .chars()
                     .take(STDERR_CHARS)
                     .collect(),
             });
         }
-        Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+        writer.join().unwrap_or(Ok(())).map_err(spawn_error)?;
+        Ok(String::from_utf8_lossy(&stdout.join().unwrap_or_default()).into_owned())
     }
+}
+
+/// Everything `pipe` yields until it closes, read on a thread of its own.
+fn read_all(pipe: Option<impl Read + Send + 'static>) -> thread::JoinHandle<Vec<u8>> {
+    thread::spawn(move || {
+        let mut bytes = Vec::new();
+        if let Some(mut pipe) = pipe {
+            // A read error ends the output early; the exit status still says how the run went.
+            let _ = pipe.read_to_end(&mut bytes);
+        }
+        bytes
+    })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    #[tokio::test]
-    async fn the_prompt_goes_to_stdin_and_the_system_prompt_to_the_environment() {
+    #[test]
+    fn the_prompt_goes_to_stdin_and_the_system_prompt_to_the_environment() {
         let llm = Llm::new(r#"printf '%s|' "$ICHNOS_SYSTEM_PROMPT"; cat"#);
-        assert_eq!(llm.complete("be brief", "hi").await.unwrap(), "be brief|hi");
+        assert_eq!(llm.complete("be brief", "hi").unwrap(), "be brief|hi");
     }
 
-    #[tokio::test]
-    async fn extra_environment_variables_reach_the_command() {
+    #[test]
+    fn extra_environment_variables_reach_the_command() {
         let llm = Llm::new(r#"cat >/dev/null; printf %s "$GREETING""#).env("GREETING", "hello");
-        assert_eq!(llm.complete("", "").await.unwrap(), "hello");
+        assert_eq!(llm.complete("", "").unwrap(), "hello");
     }
 
-    #[tokio::test]
-    async fn a_failing_command_reports_its_stderr() {
+    #[test]
+    fn a_failing_command_reports_its_stderr() {
         let llm = Llm::new("echo nope >&2; exit 3");
-        let err = llm.complete("", "").await.unwrap_err();
+        let err = llm.complete("", "").unwrap_err();
         assert!(matches!(err, LlmError::Exit { ref stderr, .. } if stderr == "nope"));
     }
 }

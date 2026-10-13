@@ -16,7 +16,7 @@ agents working in the repo; `README.md` is for users.
   small and fast. Anything agent-specific belongs in an adapter, never in core or the viewer.
 - `crates/ichnos-app`: the viewer, built with GPUI and GPUI Kit. State lives in `view_state.rs`
   (plain Rust, testable without a window); rendering lives in `viewer.rs` and `viewer/`. The
-  summarizer (`summarizer.rs`, `llm.rs`) runs here, on its own tokio runtime.
+  summarizer (`summarizer.rs`, `llm.rs`) runs here, on a thread of its own.
 - `crates/ichnos-search`: search by meaning. Embeds prompts, errors and summaries with
   `model2vec-rs` into a `sqlite-vec` index (`~/.ichnos/index.db`). Only the viewer uses it.
 - `crates/ichnos-vec`: registers `sqlite-vec` with SQLite. Nothing else lives here.

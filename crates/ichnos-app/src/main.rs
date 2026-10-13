@@ -19,7 +19,6 @@ mod settings;
 mod shots;
 mod summarizer;
 mod summarizers;
-mod summary_host;
 mod theme;
 mod view_state;
 mod viewer;
@@ -36,7 +35,7 @@ use ichnos_core::store::SessionId;
 use ichnos_search::Search;
 
 use crate::prefs::Prefs;
-use crate::summary_host::SummaryHost;
+use crate::summarizer::Summarizer;
 use crate::view_state::View;
 use crate::viewer::{Options, Viewer};
 
@@ -126,8 +125,8 @@ fn main() -> ExitCode {
     let summaries = if cli.no_summaries {
         None
     } else {
-        match SummaryHost::start(sessions_dir, data_dir.clone(), summarizer.model()) {
-            Ok(host) => Some(host),
+        match Summarizer::start(sessions_dir, data_dir.clone(), summarizer.model()) {
+            Ok(summarizer) => Some(summarizer),
             Err(err) => {
                 eprintln!("summaries are off: {err}");
                 None
