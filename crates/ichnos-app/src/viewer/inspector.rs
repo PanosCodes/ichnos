@@ -700,9 +700,7 @@ pub(super) fn heading(title: impl Into<SharedString>) -> Div {
 ///
 /// The text is shown as a fenced code block, so Markdown in it is left alone.
 pub(super) fn block(tone: SectionTone, text: &str, cx: &Context<Viewer>) -> impl IntoElement {
-    let mut hasher = DefaultHasher::new();
-    text.hash(&mut hasher);
-    let id = SharedString::from(format!("block-{:x}", hasher.finish()));
+    let id = block_id(text);
     let longest_run = text
         .split(|c| c != '`')
         .map(str::len)
@@ -736,15 +734,23 @@ pub(super) fn block(tone: SectionTone, text: &str, cx: &Context<Viewer>) -> impl
             .border_color(color(theme::RED_LINE))
             .text_color(color(theme::RED_SOFT)),
     }
-    .child(body);
+    .child(body)
+    .test_support();
     text_area(id, text.to_owned(), block, cx)
+}
+
+/// The element id of the block that shows `text`.
+pub(super) fn block_id(text: &str) -> SharedString {
+    let mut hasher = DefaultHasher::new();
+    text.hash(&mut hasher);
+    SharedString::from(format!("block-{:x}", hasher.finish()))
 }
 
 /// A black text area whose context menu copies its complete text.
 pub(super) fn text_area(
     id: SharedString,
     text: String,
-    area: gpui_kit::Stateful<Div>,
+    area: impl IntoElement,
     cx: &Context<Viewer>,
 ) -> ContextMenu<gpui_kit::Stateful<Div>> {
     let viewer = cx.entity().downgrade();
